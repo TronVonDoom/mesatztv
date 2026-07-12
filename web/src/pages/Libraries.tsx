@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Library, type LibraryKind, type ScanStatus } from '../lib/api'
+import { Link } from 'react-router-dom'
+import {
+  api,
+  type Library,
+  type LibraryKind,
+  type MetadataStatus,
+  type ScanStatus,
+} from '../lib/api'
 import DirectoryPicker from '../components/DirectoryPicker'
 
 const KIND_LABELS: Record<LibraryKind, string> = {
@@ -39,9 +46,37 @@ function ScanProgress({ status }: { status: ScanStatus }) {
   )
 }
 
+function MetadataProgress({ status }: { status: MetadataStatus }) {
+  const pct = status.total > 0 ? Math.round((status.processed / status.total) * 100) : 0
+  return (
+    <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4 mb-5">
+      <div className="flex justify-between text-sm mb-2">
+        <span className="font-medium text-violet-300">
+          Fetching TMDB metadata for {status.libraryName}…
+        </span>
+        <span className="text-slate-400">
+          {status.processed} / {status.total} ({pct}%)
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+        <div className="h-full bg-violet-500 transition-all duration-300" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="flex gap-4 text-xs text-slate-400 mt-2">
+        <span className="text-emerald-400">{status.matched} matched</span>
+        {status.unmatched > 0 && <span className="text-amber-400">{status.unmatched} no match</span>}
+      </div>
+      {status.currentTitle && (
+        <div className="text-xs text-slate-600 mt-1 truncate">{status.currentTitle}</div>
+      )}
+    </div>
+  )
+}
+
 export default function Libraries() {
   const [libraries, setLibraries] = useState<Library[]>([])
   const [scan, setScan] = useState<ScanStatus | null>(null)
+  const [meta, setMeta] = useState<MetadataStatus | null>(null)
+  const [tmdbConfigured, setTmdbConfigured] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<{ name: string; kind: LibraryKind; folders: string[] }>({
     name: '',
@@ -51,16 +86,25 @@ export default function Libraries() {
   const [submitting, setSubmitting] = useState(false)
   const [picker, setPicker] = useState<PickerTarget | null>(null)
   const pollRef = useRef<number | null>(null)
+  const metaPollRef = useRef<number | null>(null)
 
   const refresh = () => api.libraries().then(setLibraries).catch(() => {})
 
   useEffect(() => {
     refresh()
+    api.settings().then((s) => setTmdbConfigured(s.tmdbConfigured)).catch(() => {})
     api.scanStatus().then((s) => {
       setScan(s)
       if (s.running) startPolling()
     })
-    return () => stopPolling()
+    api.metadataStatus().then((m) => {
+      setMeta(m)
+      if (m.running) startMetaPolling()
+    })
+    return () => {
+      stopPolling()
+      stopMetaPolling()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -79,6 +123,23 @@ export default function Libraries() {
     if (pollRef.current != null) {
       window.clearInterval(pollRef.current)
       pollRef.current = null
+    }
+  }
+  function startMetaPolling() {
+    if (metaPollRef.current != null) return
+    metaPollRef.current = window.setInterval(async () => {
+      const m = await api.metadataStatus()
+      setMeta(m)
+      if (!m.running) {
+        stopMetaPolling()
+        refresh()
+      }
+    }, 1000)
+  }
+  function stopMetaPolling() {
+    if (metaPollRef.current != null) {
+      window.clearInterval(metaPollRef.current)
+      metaPollRef.current = null
     }
   }
 
@@ -109,6 +170,16 @@ export default function Libraries() {
       startPolling()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start scan')
+    }
+  }
+
+  async function handleFetchMetadata(id: number) {
+    setError(null)
+    try {
+      await api.startMetadata(id)
+      startMetaPolling()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start metadata fetch')
     }
   }
 
@@ -151,6 +222,8 @@ export default function Libraries() {
   }
 
   const scanning = scan?.running ?? false
+  const enriching = meta?.running ?? false
+  const busy = scanning || enriching
 
   return (
     <div>
@@ -166,7 +239,18 @@ export default function Libraries() {
         </div>
       )}
 
+      {!tmdbConfigured && (
+        <div className="rounded-lg border border-violet-500/30 bg-violet-500/5 text-slate-300 text-sm p-3 mb-5">
+          Add a TMDB API key in{' '}
+          <Link to="/settings" className="text-violet-300 hover:text-violet-200 font-medium">
+            Settings
+          </Link>{' '}
+          to fetch posters, overviews, and ratings for movies & shows.
+        </div>
+      )}
+
       {scan?.running && <ScanProgress status={scan} />}
+      {meta?.running && <MetadataProgress status={meta} />}
 
       {/* Add-library form */}
       <form
@@ -272,14 +356,28 @@ export default function Libraries() {
                 </div>
                 <button
                   onClick={() => handleScan(lib.id)}
-                  disabled={scanning}
+                  disabled={busy}
                   className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-40 px-3 py-1.5 text-sm transition-colors"
                 >
                   {scanning ? 'Scanning…' : 'Scan'}
                 </button>
+                {lib.kind !== 'other' && (
+                  <button
+                    onClick={() => handleFetchMetadata(lib.id)}
+                    disabled={busy || !tmdbConfigured}
+                    title={
+                      tmdbConfigured
+                        ? 'Fetch posters, overviews & ratings from TMDB'
+                        : 'Set a TMDB API key in Settings first'
+                    }
+                    className="rounded-lg border border-slate-700 hover:border-violet-500 hover:text-violet-300 disabled:opacity-40 px-3 py-1.5 text-sm transition-colors"
+                  >
+                    {enriching ? 'Fetching…' : 'Metadata'}
+                  </button>
+                )}
                 <button
                   onClick={() => handleDelete(lib.id)}
-                  disabled={scanning}
+                  disabled={busy}
                   className="rounded-lg border border-slate-800 text-slate-500 hover:border-rose-500/50 hover:text-rose-400 disabled:opacity-40 px-3 py-1.5 text-sm transition-colors"
                 >
                   Delete
@@ -295,7 +393,7 @@ export default function Libraries() {
                     {lib.folders.length > 1 && (
                       <button
                         onClick={() => handleRemoveFolder(lib.id, f.id)}
-                        disabled={scanning}
+                        disabled={busy}
                         className="text-slate-600 hover:text-rose-400 disabled:opacity-40 px-1"
                         aria-label="Remove folder"
                         title="Remove folder (and its indexed media)"
@@ -307,7 +405,7 @@ export default function Libraries() {
                 ))}
                 <button
                   onClick={() => setPicker({ mode: 'add', libraryId: lib.id })}
-                  disabled={scanning}
+                  disabled={busy}
                   className="text-xs text-indigo-300 hover:text-indigo-200 disabled:opacity-40"
                 >
                   + Add folder

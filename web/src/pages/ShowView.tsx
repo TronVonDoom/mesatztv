@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   api,
   artworkUrl,
+  tmdbImage,
   formatDuration,
   formatSize,
   type SeasonGroup,
@@ -74,6 +75,18 @@ export default function ShowView() {
         )}
       </h1>
 
+      {detail && (detail.rating != null || detail.genres || detail.overview) && (
+        <div className="mb-6 max-w-3xl space-y-1.5">
+          {(detail.rating ? detail.rating > 0 : false) && (
+            <div className="text-sm text-amber-300">
+              ⭐ {detail.rating!.toFixed(1)}
+              {detail.genres && <span className="text-slate-500"> · {detail.genres}</span>}
+            </div>
+          )}
+          {detail.overview && <p className="text-sm text-slate-300">{detail.overview}</p>}
+        </div>
+      )}
+
       {!detail ? (
         <div className="text-slate-500 text-sm">Loading…</div>
       ) : current ? (
@@ -123,7 +136,13 @@ export default function ShowView() {
                 title={seasonLabel(s.season)}
                 subtitle={`${s.episodes.length} ep · ${formatDuration(totalDur)}`}
                 icon="📺"
-                imageUrl={posterEp ? artworkUrl(posterEp.id, 'season') : undefined}
+                imageUrl={
+                  posterEp
+                    ? artworkUrl(posterEp.id, 'season')
+                    : s.tmdbPosterPath
+                      ? tmdbImage(s.tmdbPosterPath)
+                      : undefined
+                }
                 onClick={() => setOpenSeason(s.season)}
               />
             )

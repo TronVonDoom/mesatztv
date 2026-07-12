@@ -19,6 +19,43 @@ model Library {
   createdAt DateTime        @default(now())
   folders   LibraryFolder[]
   items     MediaItem[]
+  shows     Show[]
+}
+
+// Simple key/value store (e.g. the TMDB API key).
+model Setting {
+  key   String @id
+  value String
+}
+
+// Show-level metadata (one row per distinct show title in a TV library).
+model Show {
+  id               Int      @id @default(autoincrement())
+  library          Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  libraryId        Int
+  title            String
+  year             Int?
+  tmdbId           Int?
+  overview         String?
+  genres           String? // comma-separated
+  rating           Float?
+  tmdbPosterPath   String? // TMDB path like "/abc.jpg"
+  tmdbBackdropPath String?
+  updatedAt        DateTime @updatedAt
+  seasons          Season[]
+
+  @@unique([libraryId, title])
+}
+
+model Season {
+  id             Int     @id @default(autoincrement())
+  show           Show    @relation(fields: [showId], references: [id], onDelete: Cascade)
+  showId         Int
+  number         Int
+  tmdbPosterPath String?
+  overview       String?
+
+  @@unique([showId, number])
 }
 
 // One root folder belonging to a library.
@@ -56,6 +93,13 @@ model MediaItem {
   posterPath       String? // this item's own art (movie poster / episode thumb)
   showPosterPath   String? // show-level art (shared by all episodes of a show)
   seasonPosterPath String? // season-level art (shared by a season's episodes)
+  // TMDB metadata (mainly for movies; episodes/other may stay null).
+  tmdbId           Int?
+  overview         String?
+  genres           String? // comma-separated
+  rating           Float?
+  tmdbPosterPath   String?
+  tmdbBackdropPath String?
   missing     Boolean  @default(false)
   addedAt     DateTime @default(now())
   updatedAt   DateTime @updatedAt

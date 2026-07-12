@@ -50,6 +50,12 @@ export type MediaItem = {
   posterPath: string | null
   showPosterPath: string | null
   seasonPosterPath: string | null
+  tmdbId: number | null
+  overview: string | null
+  genres: string | null
+  rating: number | null
+  tmdbPosterPath: string | null
+  tmdbBackdropPath: string | null
   missing: boolean
 }
 
@@ -72,18 +78,43 @@ export type Show = {
   totalDurationSec: number
   libraryId: number
   posterItemId: number | null
+  tmdbPosterPath: string | null
+  overview: string | null
+  rating: number | null
+  genres: string | null
 }
 
 export type SeasonGroup = {
   season: number | null
   episodes: MediaItem[]
+  tmdbPosterPath: string | null
 }
 
 export type ShowDetail = {
   showTitle: string
   year: number | null
   episodeCount: number
+  overview: string | null
+  genres: string | null
+  rating: number | null
+  tmdbPosterPath: string | null
   seasons: SeasonGroup[]
+}
+
+export type SettingsInfo = { tmdbConfigured: boolean }
+
+export type MetadataStatus = {
+  running: boolean
+  libraryId: number | null
+  libraryName: string | null
+  total: number
+  processed: number
+  matched: number
+  unmatched: number
+  currentTitle: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  error: string | null
 }
 
 export type FsListing = {
@@ -169,6 +200,22 @@ export const api = {
     ),
   browse: (path?: string) =>
     request<FsListing>(`/api/fs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  settings: () => request<SettingsInfo>('/api/settings'),
+  saveTmdbKey: (apiKey: string) =>
+    request<{ ok: boolean }>('/api/settings/tmdb', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey }),
+    }),
+  startMetadata: (libraryId: number, force = false) =>
+    request<{ started: boolean }>(`/api/metadata/${libraryId}${force ? '?force=1' : ''}`, {
+      method: 'POST',
+    }),
+  metadataStatus: () => request<MetadataStatus>('/api/metadata/status'),
+}
+
+// Build a TMDB CDN image URL from a stored path like "/abc.jpg".
+export function tmdbImage(path: string, size: 'w200' | 'w342' | 'w500' | 'original' = 'w342'): string {
+  return `https://image.tmdb.org/t/p/${size}${path}`
 }
 
 export function formatDuration(seconds: number | null): string {

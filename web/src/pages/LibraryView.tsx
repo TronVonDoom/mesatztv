@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   api,
   artworkUrl,
+  tmdbImage,
   type Library,
   type MediaItem,
   type Show,
@@ -98,7 +99,13 @@ export default function LibraryView() {
                 subtitle={`${s.seasonCount} season${s.seasonCount === 1 ? '' : 's'} · ${s.episodeCount} ep`}
                 badge={s.year ? String(s.year) : undefined}
                 icon="📺"
-                imageUrl={s.posterItemId ? artworkUrl(s.posterItemId, 'show') : undefined}
+                imageUrl={
+                  s.posterItemId
+                    ? artworkUrl(s.posterItemId, 'show')
+                    : s.tmdbPosterPath
+                      ? tmdbImage(s.tmdbPosterPath)
+                      : undefined
+                }
                 onClick={() =>
                   navigate(`/browse/${id}/show/${encodeURIComponent(s.showTitle)}`)
                 }
@@ -118,7 +125,13 @@ export default function LibraryView() {
                 subtitle={m.year ? String(m.year) : undefined}
                 badge={m.width && m.height ? `${m.height}p` : undefined}
                 icon={library?.kind === 'movie' ? '🎬' : '🎞️'}
-                imageUrl={m.posterPath ? artworkUrl(m.id, 'poster') : undefined}
+                imageUrl={
+                  m.posterPath
+                    ? artworkUrl(m.id, 'poster')
+                    : m.tmdbPosterPath
+                      ? tmdbImage(m.tmdbPosterPath)
+                      : undefined
+                }
                 onClick={() => setSelectedId(m.id)}
               />
             ))}

@@ -168,12 +168,15 @@ Volumes:
 3. Click **Scan**. A progress bar shows files being probed. The scanner reads
    duration/resolution/codecs via ffprobe and parses Plex-style names into
    show / season / episode / year / title.
-4. Browse everything under **Browse**, Plex-style: pick a library → TV shows
+4. (Optional) Add a **TMDB API key** under **Settings** (free, from
+   themoviedb.org → account → API). Then hit **Metadata** on a movie or TV
+   library to fetch posters, overviews, genres, and ratings.
+5. Browse everything under **Browse**, Plex-style: pick a library → TV shows
    drill into season tiles and episodes; movies open a detail panel. Tiles use
    **local artwork** (`poster.jpg` / `folder.jpg` / episode thumbnails, Plex &
-   Kodi/Jellyfin naming) when present, falling back to a monogram tile. Re-scanning
-   is incremental — unchanged files are skipped, files that disappeared are
-   flagged missing.
+   Kodi/Jellyfin naming) first, then **TMDB** posters, then a monogram fallback.
+   Re-scanning is incremental — unchanged files are skipped, files that
+   disappeared are flagged missing.
 
 ## Roadmap
 

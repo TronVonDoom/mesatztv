@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   api,
   artworkUrl,
+  tmdbImage,
   formatDuration,
   formatSize,
   posterGradient,
@@ -62,12 +63,12 @@ export default function MediaDetailModal({
               className="w-28 sm:w-32 shrink-0 aspect-[2/3] rounded-lg self-center sm:self-start flex items-center justify-center text-4xl overflow-hidden relative"
               style={{ background: posterGradient(item.showTitle || item.title) }}
             >
-              {item.posterPath || item.showPosterPath ? (
-                <img
-                  src={artworkUrl(item.id, item.posterPath ? 'poster' : 'show')}
-                  alt={item.title}
-                  className="absolute inset-0 w-full h-full object-cover"
-                />
+              {item.posterPath ? (
+                <img src={artworkUrl(item.id, 'poster')} alt={item.title} className="absolute inset-0 w-full h-full object-cover" />
+              ) : item.showPosterPath ? (
+                <img src={artworkUrl(item.id, 'show')} alt={item.title} className="absolute inset-0 w-full h-full object-cover" />
+              ) : item.tmdbPosterPath ? (
+                <img src={tmdbImage(item.tmdbPosterPath)} alt={item.title} className="absolute inset-0 w-full h-full object-cover" />
               ) : (
                 <span className="opacity-80">
                   {item.type === 'movie' ? '🎬' : item.type === 'episode' ? '📺' : '🎞️'}
@@ -100,6 +101,20 @@ export default function MediaDetailModal({
                 <div className="mt-2 text-xs text-amber-400">
                   ⚠ File is missing (not found on last scan)
                 </div>
+              )}
+              {(item.rating || item.genres) && (
+                <div className="mt-2 text-sm">
+                  {item.rating ? <span className="text-amber-300">⭐ {item.rating.toFixed(1)}</span> : null}
+                  {item.genres && (
+                    <span className="text-slate-500">
+                      {item.rating ? ' · ' : ''}
+                      {item.genres}
+                    </span>
+                  )}
+                </div>
+              )}
+              {item.overview && (
+                <p className="mt-3 text-sm text-slate-300 leading-relaxed">{item.overview}</p>
               )}
               <div className="mt-4">
                 <Row label="Library" value={item.library.name} />
