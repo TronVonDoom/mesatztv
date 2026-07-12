@@ -169,9 +169,11 @@ Volumes:
    duration/resolution/codecs via ffprobe and parses Plex-style names into
    show / season / episode / year / title.
 4. Browse everything under **Browse**, Plex-style: pick a library → TV shows
-   drill into seasons and episodes; movies open a detail panel. Re-scanning is
-   incremental — unchanged files are skipped, and files that disappeared are
-   flagged as missing.
+   drill into season tiles and episodes; movies open a detail panel. Tiles use
+   **local artwork** (`poster.jpg` / `folder.jpg` / episode thumbnails, Plex &
+   Kodi/Jellyfin naming) when present, falling back to a monogram tile. Re-scanning
+   is incremental — unchanged files are skipped, files that disappeared are
+   flagged missing.
 
 ## Roadmap
 

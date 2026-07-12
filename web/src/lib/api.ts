@@ -42,6 +42,9 @@ export type MediaItem = {
   audioCodec: string | null
   container: string | null
   sizeBytes: number | null
+  posterPath: string | null
+  showPosterPath: string | null
+  seasonPosterPath: string | null
   missing: boolean
 }
 
@@ -63,6 +66,7 @@ export type Show = {
   episodeCount: number
   totalDurationSec: number
   libraryId: number
+  posterItemId: number | null
 }
 
 export type SeasonGroup = {
@@ -175,6 +179,14 @@ export function formatSize(bytes: number | null): string {
     i++
   }
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`
+}
+
+// URL for a local artwork file, or null if the item has none of that type.
+export function artworkUrl(
+  id: number,
+  type: 'poster' | 'show' | 'season',
+): string {
+  return `/api/artwork/${id}?type=${type}`
 }
 
 // Deterministic dark gradient for placeholder "posters" (no artwork yet).

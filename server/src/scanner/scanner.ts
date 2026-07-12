@@ -3,6 +3,9 @@ import path from 'node:path'
 import { prisma } from '../db.js'
 import { ffprobe } from '../ffprobe.js'
 import { parseMedia, type LibraryKind } from './parse.js'
+import { detectArtwork } from './artwork.js'
+
+type DirCache = Map<string, string[] | null>
 
 const VIDEO_EXTS = new Set([
   '.mkv', '.mp4', '.m4v', '.avi', '.mov', '.ts', '.m2ts',
@@ -72,12 +75,13 @@ async function walk(dir: string): Promise<string[]> {
   return out
 }
 
-/** Process a single file: skip if unchanged, otherwise probe + upsert. */
+/** Process a single file: skip if unchanged, otherwise probe/detect art + upsert. */
 async function processFile(
   filePath: string,
   libraryId: number,
   libraryPath: string,
   kind: LibraryKind,
+  cache: DirCache,
 ): Promise<void> {
   status.currentPath = filePath
   const stat = await fs.stat(filePath)
@@ -86,15 +90,29 @@ async function processFile(
   // round-trips exactly and is more than precise enough for change detection.
   const mtimeMs = Math.floor(stat.mtimeMs)
   const existing = await prisma.mediaItem.findUnique({ where: { path: filePath } })
+  const parsed = parseMedia(filePath, libraryPath, kind)
+  // Artwork detection is cheap (cached directory reads), so always run it — that
+  // way posters populate on a re-scan even for otherwise-unchanged files.
+  const art = await detectArtwork(filePath, libraryPath, kind, parsed.season, cache)
 
-  // Unchanged file we've already indexed — just clear any "missing" flag.
-  if (existing && existing.mtimeMs === mtimeMs && !existing.missing) {
+  // Skip only if the file is unchanged, already probed, and artwork matches.
+  if (
+    existing &&
+    existing.mtimeMs === mtimeMs &&
+    existing.durationSec != null &&
+    !existing.missing &&
+    existing.posterPath === art.posterPath &&
+    existing.showPosterPath === art.showPosterPath &&
+    existing.seasonPosterPath === art.seasonPosterPath
+  ) {
     status.skipped++
     return
   }
 
-  const probe = await ffprobe(filePath)
-  const parsed = parseMedia(filePath, libraryPath, kind)
+  // Reuse existing probe results when the file itself hasn't changed.
+  const unchanged = !!existing && existing.mtimeMs === mtimeMs && existing.durationSec != null
+  const probe = unchanged ? null : await ffprobe(filePath)
+
   const data = {
     libraryId,
     type: parsed.type,
@@ -103,12 +121,15 @@ async function processFile(
     season: parsed.season,
     episode: parsed.episode,
     year: parsed.year,
-    durationSec: probe?.durationSec ?? null,
-    width: probe?.width ?? null,
-    height: probe?.height ?? null,
-    videoCodec: probe?.videoCodec ?? null,
-    audioCodec: probe?.audioCodec ?? null,
-    container: probe?.container ?? null,
+    durationSec: unchanged ? existing!.durationSec : probe?.durationSec ?? null,
+    width: unchanged ? existing!.width : probe?.width ?? null,
+    height: unchanged ? existing!.height : probe?.height ?? null,
+    videoCodec: unchanged ? existing!.videoCodec : probe?.videoCodec ?? null,
+    audioCodec: unchanged ? existing!.audioCodec : probe?.audioCodec ?? null,
+    container: unchanged ? existing!.container : probe?.container ?? null,
+    posterPath: art.posterPath,
+    showPosterPath: art.showPosterPath,
+    seasonPosterPath: art.seasonPosterPath,
     sizeBytes: stat.size,
     mtimeMs,
     missing: false,
@@ -165,8 +186,9 @@ export async function scanLibrary(libraryId: number): Promise<void> {
     const files = await walk(library.path)
     status.total = files.length
 
+    const dirCache: DirCache = new Map()
     await runPool(files, PROBE_CONCURRENCY, (f) =>
-      processFile(f, library.id, library.path, library.kind as LibraryKind),
+      processFile(f, library.id, library.path, library.kind as LibraryKind, dirCache),
     )
 
     // Anything in this library not seen in this scan pass is now missing.

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   api,
+  artworkUrl,
   type Library,
   type MediaItem,
   type Show,
@@ -97,6 +98,7 @@ export default function LibraryView() {
                 subtitle={`${s.seasonCount} season${s.seasonCount === 1 ? '' : 's'} · ${s.episodeCount} ep`}
                 badge={s.year ? String(s.year) : undefined}
                 icon="📺"
+                imageUrl={s.posterItemId ? artworkUrl(s.posterItemId, 'show') : undefined}
                 onClick={() =>
                   navigate(`/browse/${id}/show/${encodeURIComponent(s.showTitle)}`)
                 }
@@ -116,6 +118,7 @@ export default function LibraryView() {
                 subtitle={m.year ? String(m.year) : undefined}
                 badge={m.width && m.height ? `${m.height}p` : undefined}
                 icon={library?.kind === 'movie' ? '🎬' : '🎞️'}
+                imageUrl={m.posterPath ? artworkUrl(m.id, 'poster') : undefined}
                 onClick={() => setSelectedId(m.id)}
               />
             ))}

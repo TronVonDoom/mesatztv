@@ -16,7 +16,15 @@ showsRouter.get('/', async (req, res) => {
 
   const episodes = await prisma.mediaItem.findMany({
     where,
-    select: { showTitle: true, season: true, year: true, durationSec: true, libraryId: true },
+    select: {
+      id: true,
+      showTitle: true,
+      season: true,
+      year: true,
+      durationSec: true,
+      libraryId: true,
+      showPosterPath: true,
+    },
   })
 
   type Agg = {
@@ -26,6 +34,7 @@ showsRouter.get('/', async (req, res) => {
     episodeCount: number
     totalDurationSec: number
     libraryId: number
+    posterItemId: number | null // an episode id whose show folder has artwork
   }
   const map = new Map<string, Agg>()
   for (const e of episodes) {
@@ -39,6 +48,7 @@ showsRouter.get('/', async (req, res) => {
         episodeCount: 0,
         totalDurationSec: 0,
         libraryId: e.libraryId,
+        posterItemId: null,
       }
       map.set(key, agg)
     }
@@ -46,6 +56,7 @@ showsRouter.get('/', async (req, res) => {
     agg.episodeCount++
     agg.totalDurationSec += e.durationSec ?? 0
     if (agg.year == null && e.year != null) agg.year = e.year
+    if (agg.posterItemId == null && e.showPosterPath) agg.posterItemId = e.id
   }
 
   const shows = [...map.values()]
@@ -56,6 +67,7 @@ showsRouter.get('/', async (req, res) => {
       episodeCount: s.episodeCount,
       totalDurationSec: s.totalDurationSec,
       libraryId: s.libraryId,
+      posterItemId: s.posterItemId,
     }))
     .sort((a, b) => a.showTitle.localeCompare(b.showTitle))
 

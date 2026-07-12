@@ -1,44 +1,70 @@
+import { useState } from 'react'
 import { posterGradient } from '../lib/api'
+
+/** "The Big Bang Theory" -> "BB", "Firefly" -> "FI". */
+function initials(title: string): string {
+  const words = title
+    .replace(/^(the|a|an)\s+/i, '')
+    .split(/\s+/)
+    .filter(Boolean)
+  const a = words[0]?.[0] ?? title[0] ?? '?'
+  const b = words[1]?.[0] ?? ''
+  return (a + b).toUpperCase()
+}
 
 export default function PosterCard({
   title,
   subtitle,
   badge,
   icon,
+  imageUrl,
   onClick,
 }: {
   title: string
   subtitle?: string
   badge?: string
   icon: string
+  imageUrl?: string
   onClick: () => void
 }) {
+  const [imgError, setImgError] = useState(false)
+  const showImage = imageUrl && !imgError
+
   return (
     <button onClick={onClick} className="group text-left w-full">
       <div
-        className="aspect-[2/3] rounded-lg overflow-hidden relative shadow-lg flex items-center justify-center p-3"
+        className="aspect-[2/3] rounded-lg overflow-hidden relative shadow-lg flex items-center justify-center"
         style={{ background: posterGradient(title) }}
       >
-        {/* type icon chip */}
-        <span className="absolute top-2 left-2 text-xs bg-black/30 backdrop-blur rounded px-1.5 py-0.5 leading-none">
+        {showImage ? (
+          <img
+            src={imageUrl}
+            alt={title}
+            loading="lazy"
+            onError={() => setImgError(true)}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          <span className="text-3xl font-bold text-white/85 drop-shadow select-none">
+            {initials(title)}
+          </span>
+        )}
+        <span className="absolute top-2 left-2 text-xs bg-black/40 backdrop-blur rounded px-1.5 py-0.5 leading-none">
           {icon}
         </span>
         {badge && (
-          <span className="absolute top-2 right-2 text-[10px] font-medium bg-black/40 backdrop-blur px-1.5 py-0.5 rounded text-slate-200">
+          <span className="absolute top-2 right-2 text-[10px] font-medium bg-black/50 backdrop-blur px-1.5 py-0.5 rounded text-slate-100">
             {badge}
           </span>
         )}
-        {/* title acts as the "artwork" until real posters land */}
-        <span className="text-center text-sm font-semibold text-white/95 leading-snug line-clamp-4 drop-shadow">
-          {title}
-        </span>
         <div className="absolute inset-0 rounded-lg ring-1 ring-white/10 group-hover:ring-2 group-hover:ring-indigo-400/70 transition-all" />
       </div>
-      {subtitle && (
-        <div className="mt-1.5 text-xs text-slate-400 truncate group-hover:text-slate-200 transition-colors">
-          {subtitle}
+      <div className="mt-1.5">
+        <div className="text-sm text-slate-200 truncate group-hover:text-indigo-300 transition-colors">
+          {title}
         </div>
-      )}
+        {subtitle && <div className="text-xs text-slate-500 truncate">{subtitle}</div>}
+      </div>
     </button>
   )
 }

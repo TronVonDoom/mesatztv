@@ -38,6 +38,10 @@ model MediaItem {
   container   String?
   sizeBytes   Float? // Float (not Int) — file sizes exceed 32-bit; avoids BigInt JSON pain
   mtimeMs     Float? // used to skip re-probing unchanged files
+  // Local artwork on disk (Plex/Kodi/Jellyfin naming), served via /api/artwork.
+  posterPath       String? // this item's own art (movie poster / episode thumb)
+  showPosterPath   String? // show-level art (shared by all episodes of a show)
+  seasonPosterPath String? // season-level art (shared by a season's episodes)
   missing     Boolean  @default(false)
   addedAt     DateTime @default(now())
   updatedAt   DateTime @updatedAt

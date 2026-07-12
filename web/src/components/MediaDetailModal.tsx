@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   api,
+  artworkUrl,
   formatDuration,
   formatSize,
   posterGradient,
@@ -58,10 +59,20 @@ export default function MediaDetailModal({
         ) : (
           <div className="flex flex-col sm:flex-row gap-5">
             <div
-              className="w-28 sm:w-32 shrink-0 aspect-[2/3] rounded-lg self-center sm:self-start flex items-center justify-center text-4xl opacity-80"
+              className="w-28 sm:w-32 shrink-0 aspect-[2/3] rounded-lg self-center sm:self-start flex items-center justify-center text-4xl overflow-hidden relative"
               style={{ background: posterGradient(item.showTitle || item.title) }}
             >
-              {item.type === 'movie' ? '🎬' : item.type === 'episode' ? '📺' : '🎞️'}
+              {item.posterPath || item.showPosterPath ? (
+                <img
+                  src={artworkUrl(item.id, item.posterPath ? 'poster' : 'show')}
+                  alt={item.title}
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+              ) : (
+                <span className="opacity-80">
+                  {item.type === 'movie' ? '🎬' : item.type === 'episode' ? '📺' : '🎞️'}
+                </span>
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-3">

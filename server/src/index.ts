@@ -8,6 +8,7 @@ import { mediaRouter } from './routes/media.js'
 import { scanRouter } from './routes/scan.js'
 import { showsRouter } from './routes/shows.js'
 import { fsRouter } from './routes/fs.js'
+import { artworkRouter } from './routes/artwork.js'
 
 const app = express()
 const PORT = Number(process.env.PORT ?? 8688)
@@ -74,6 +75,7 @@ app.use('/api/media', mediaRouter)
 app.use('/api/scan', scanRouter)
 app.use('/api/shows', showsRouter)
 app.use('/api/fs', fsRouter)
+app.use('/api/artwork', artworkRouter)
 
 // --- Static frontend (production only) --------------------------------------
 const publicDir = path.join(process.cwd(), 'public')

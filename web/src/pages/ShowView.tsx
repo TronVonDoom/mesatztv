@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   api,
+  artworkUrl,
   formatDuration,
   formatSize,
-  posterGradient,
   type SeasonGroup,
   type ShowDetail,
 } from '../lib/api'
 import MediaDetailModal from '../components/MediaDetailModal'
+import PosterCard from '../components/PosterCard'
 
 function seasonLabel(season: number | null): string {
   return season == null ? 'Unsorted' : `Season ${season}`
@@ -115,31 +116,16 @@ export default function ShowView() {
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-x-4 gap-y-5">
           {detail.seasons.map((s) => {
             const totalDur = s.episodes.reduce((a, e) => a + (e.durationSec ?? 0), 0)
+            const posterEp = s.episodes.find((e) => e.seasonPosterPath)
             return (
-              <button
+              <PosterCard
                 key={s.season ?? 'none'}
+                title={seasonLabel(s.season)}
+                subtitle={`${s.episodes.length} ep · ${formatDuration(totalDur)}`}
+                icon="📺"
+                imageUrl={posterEp ? artworkUrl(posterEp.id, 'season') : undefined}
                 onClick={() => setOpenSeason(s.season)}
-                className="group text-left w-full"
-              >
-                <div
-                  className="aspect-[2/3] rounded-lg overflow-hidden relative shadow-lg flex flex-col items-center justify-center p-3"
-                  style={{ background: posterGradient(`${showTitle} ${seasonLabel(s.season)}`) }}
-                >
-                  <span className="absolute top-2 left-2 text-xs bg-black/30 backdrop-blur rounded px-1.5 py-0.5 leading-none">
-                    📺
-                  </span>
-                  <span className="text-4xl font-bold text-white/90 drop-shadow">
-                    {s.season == null ? '—' : s.season}
-                  </span>
-                  <span className="mt-1 text-xs font-medium text-white/80">
-                    {seasonLabel(s.season)}
-                  </span>
-                  <div className="absolute inset-0 rounded-lg ring-1 ring-white/10 group-hover:ring-2 group-hover:ring-indigo-400/70 transition-all" />
-                </div>
-                <div className="mt-1.5 text-xs text-slate-400 truncate group-hover:text-slate-200 transition-colors">
-                  {s.episodes.length} ep · {formatDuration(totalDur)}
-                </div>
-              </button>
+              />
             )
           })}
         </div>
