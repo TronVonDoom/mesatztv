@@ -4,6 +4,17 @@ services:
     image: mesatztv:latest
     container_name: mesatztv
     restart: unless-stopped
+    # Unraid Docker integration: WebUI button, icon, and console.
+    # [IP]/[PORT:8688] are Unraid placeholders it substitutes automatically.
+    # The icon is served by the container itself, so it works whether the repo
+    # is public or private. If your Unraid IP isn't 192.168.1.100, update it
+    # (or, if you make the repo public, point it at the GitHub raw URL:
+    #  https://raw.githubusercontent.com/TronVonDoom/mesatztv/main/web/public/mesatztv-icon.png)
+    labels:
+      net.unraid.docker.managed: "composeman"
+      net.unraid.docker.webui: "http://[IP]:[PORT:8688]/"
+      net.unraid.docker.icon: "http://192.168.1.100:8688/mesatztv-icon.png"
+      net.unraid.docker.shell: "bash"
     ports:
       - "8688:8688"
     environment:
