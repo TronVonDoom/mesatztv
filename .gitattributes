@@ -1,0 +1,8 @@
+# Normalize line endings. Force LF on files that run on Linux/Unraid so a
+# Windows checkout can't sneak CRLF into shell scripts or the Docker build.
+* text=auto eol=lf
+*.sh   text eol=lf
+Dockerfile text eol=lf
+*.png binary
+*.jpg binary
+*.svg text eol=lf

@@ -1,0 +1,17 @@
+services:
+  mesatztv:
+    build: .
+    image: mesatztv:latest
+    container_name: mesatztv
+    restart: unless-stopped
+    ports:
+      - "8688:8688"
+    environment:
+      - TZ=America/Chicago
+      - PORT=8688
+    volumes:
+      # Persistent app data (database + config) — created automatically.
+      - ./data:/app/data
+      # Your media library. EDIT the left side to your Unraid media share,
+      # e.g. /mnt/user/media:/media:ro  (read-only is recommended)
+      - ./media:/media:ro
