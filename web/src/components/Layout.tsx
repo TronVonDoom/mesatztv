@@ -40,7 +40,7 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 overflow-x-auto">
-        <div className="max-w-5xl mx-auto p-8">
+        <div className="max-w-[1800px] mx-auto px-6 py-8">
           <Outlet />
         </div>
       </main>

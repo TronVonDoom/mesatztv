@@ -16,25 +16,29 @@ export default function PosterCard({
   return (
     <button onClick={onClick} className="group text-left w-full">
       <div
-        className="aspect-[2/3] rounded-lg overflow-hidden relative shadow-lg"
+        className="aspect-[2/3] rounded-lg overflow-hidden relative shadow-lg flex items-center justify-center p-3"
         style={{ background: posterGradient(title) }}
       >
-        <div className="absolute inset-0 flex items-center justify-center text-5xl opacity-30 group-hover:opacity-50 transition-opacity">
+        {/* type icon chip */}
+        <span className="absolute top-2 left-2 text-xs bg-black/30 backdrop-blur rounded px-1.5 py-0.5 leading-none">
           {icon}
-        </div>
+        </span>
         {badge && (
-          <div className="absolute top-2 right-2 text-[10px] font-medium bg-black/50 backdrop-blur px-1.5 py-0.5 rounded text-slate-200">
+          <span className="absolute top-2 right-2 text-[10px] font-medium bg-black/40 backdrop-blur px-1.5 py-0.5 rounded text-slate-200">
             {badge}
-          </div>
+          </span>
         )}
-        <div className="absolute inset-0 rounded-lg ring-1 ring-white/10 group-hover:ring-2 group-hover:ring-indigo-400/60 transition-all" />
-      </div>
-      <div className="mt-2">
-        <div className="text-sm truncate text-slate-200 group-hover:text-indigo-300 transition-colors">
+        {/* title acts as the "artwork" until real posters land */}
+        <span className="text-center text-sm font-semibold text-white/95 leading-snug line-clamp-4 drop-shadow">
           {title}
-        </div>
-        {subtitle && <div className="text-xs text-slate-500 truncate">{subtitle}</div>}
+        </span>
+        <div className="absolute inset-0 rounded-lg ring-1 ring-white/10 group-hover:ring-2 group-hover:ring-indigo-400/70 transition-all" />
       </div>
+      {subtitle && (
+        <div className="mt-1.5 text-xs text-slate-400 truncate group-hover:text-slate-200 transition-colors">
+          {subtitle}
+        </div>
+      )}
     </button>
   )
 }

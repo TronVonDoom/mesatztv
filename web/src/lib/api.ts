@@ -77,6 +77,12 @@ export type ShowDetail = {
   seasons: SeasonGroup[]
 }
 
+export type FsListing = {
+  path: string
+  parent: string | null
+  dirs: { name: string; path: string }[]
+}
+
 export type ScanStatus = {
   running: boolean
   libraryId: number | null
@@ -145,6 +151,8 @@ export const api = {
     request<ShowDetail>(
       `/api/shows/detail?libraryId=${libraryId}&show=${encodeURIComponent(show)}`,
     ),
+  browse: (path?: string) =>
+    request<FsListing>(`/api/fs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 }
 
 export function formatDuration(seconds: number | null): string {

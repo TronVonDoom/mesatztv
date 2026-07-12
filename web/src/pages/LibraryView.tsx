@@ -89,7 +89,7 @@ export default function LibraryView() {
         shows.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 2xl:grid-cols-10 gap-x-4 gap-y-5">
             {shows.map((s) => (
               <PosterCard
                 key={s.showTitle}
@@ -108,7 +108,7 @@ export default function LibraryView() {
         <EmptyState />
       ) : (
         <>
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 2xl:grid-cols-10 gap-x-4 gap-y-5">
             {items.map((m) => (
               <PosterCard
                 key={m.id}

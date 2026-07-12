@@ -5,6 +5,7 @@ import {
   type LibraryKind,
   type ScanStatus,
 } from '../lib/api'
+import DirectoryPicker from '../components/DirectoryPicker'
 
 const KIND_LABELS: Record<LibraryKind, string> = {
   tv: 'TV Shows',
@@ -54,6 +55,7 @@ export default function Libraries() {
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', path: '', kind: 'tv' as LibraryKind })
   const [submitting, setSubmitting] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const pollRef = useRef<number | null>(null)
 
   const refresh = () => api.libraries().then(setLibraries).catch(() => {})
@@ -157,13 +159,22 @@ export default function Libraries() {
         </label>
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-slate-400">Path (inside container)</span>
-          <input
-            className="rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 font-mono text-sm focus:border-indigo-500 outline-none"
-            placeholder="/media/TV"
-            value={form.path}
-            onChange={(e) => setForm({ ...form, path: e.target.value })}
-            required
-          />
+          <div className="flex gap-2">
+            <input
+              className="flex-1 min-w-0 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 font-mono text-sm focus:border-indigo-500 outline-none"
+              placeholder="/media/plex_media/movies"
+              value={form.path}
+              onChange={(e) => setForm({ ...form, path: e.target.value })}
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="rounded-lg border border-slate-700 px-3 text-sm text-slate-300 hover:border-indigo-500 hover:text-indigo-300 shrink-0 transition-colors"
+            >
+              Browse…
+            </button>
+          </div>
         </label>
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-slate-400">Type</span>
@@ -222,6 +233,17 @@ export default function Libraries() {
             </div>
           ))}
         </div>
+      )}
+
+      {pickerOpen && (
+        <DirectoryPicker
+          initialPath={form.path || '/media'}
+          onSelect={(p) => {
+            setForm({ ...form, path: p })
+            setPickerOpen(false)
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
       )}
     </div>
   )
