@@ -35,3 +35,15 @@ mediaRouter.get('/', async (req, res) => {
 
   res.json({ total, page, pageSize, items })
 })
+
+// GET /api/media/:id  -> one item with its library name (for the detail panel)
+mediaRouter.get('/:id', async (req, res) => {
+  const id = Number(req.params.id)
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'invalid id' })
+  const item = await prisma.mediaItem.findUnique({
+    where: { id },
+    include: { library: { select: { name: true, kind: true } } },
+  })
+  if (!item) return res.status(404).json({ error: 'Not found' })
+  res.json(item)
+})

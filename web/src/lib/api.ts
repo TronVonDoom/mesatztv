@@ -45,11 +45,36 @@ export type MediaItem = {
   missing: boolean
 }
 
+export type MediaItemDetail = MediaItem & {
+  library: { name: string; kind: LibraryKind }
+}
+
 export type MediaPage = {
   total: number
   page: number
   pageSize: number
   items: MediaItem[]
+}
+
+export type Show = {
+  showTitle: string
+  year: number | null
+  seasonCount: number
+  episodeCount: number
+  totalDurationSec: number
+  libraryId: number
+}
+
+export type SeasonGroup = {
+  season: number | null
+  episodes: MediaItem[]
+}
+
+export type ShowDetail = {
+  showTitle: string
+  year: number | null
+  episodeCount: number
+  seasons: SeasonGroup[]
 }
 
 export type ScanStatus = {
@@ -113,6 +138,13 @@ export const api = {
     if (params.q) qs.set('q', params.q)
     return request<MediaPage>(`/api/media?${qs.toString()}`)
   },
+  mediaItem: (id: number) => request<MediaItemDetail>(`/api/media/${id}`),
+  shows: (libraryId: number) =>
+    request<{ shows: Show[] }>(`/api/shows?libraryId=${libraryId}`),
+  showDetail: (libraryId: number, show: string) =>
+    request<ShowDetail>(
+      `/api/shows/detail?libraryId=${libraryId}&show=${encodeURIComponent(show)}`,
+    ),
 }
 
 export function formatDuration(seconds: number | null): string {
@@ -135,4 +167,12 @@ export function formatSize(bytes: number | null): string {
     i++
   }
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`
+}
+
+// Deterministic dark gradient for placeholder "posters" (no artwork yet).
+export function posterGradient(seed: string): string {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360
+  const h2 = (h + 45) % 360
+  return `linear-gradient(150deg, hsl(${h} 45% 32%), hsl(${h2} 50% 18%))`
 }

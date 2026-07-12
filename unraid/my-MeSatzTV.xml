@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>MeSatzTV</Name>
+  <Repository>ghcr.io/tronvondoom/mesatztv:latest</Repository>
+  <Registry>https://ghcr.io/</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/TronVonDoom/mesatztv/issues</Support>
+  <Project>https://github.com/TronVonDoom/mesatztv</Project>
+  <Overview>Turn your media library into scheduled 24/7 live TV channels with bumpers, filler, watermark overlays, and M3U/XMLTV output for Plex/Jellyfin/Emby or any IPTV player. NVIDIA GPU is passed through for hardware transcoding.</Overview>
+  <Category>MediaServer:Video MediaApp:Video</Category>
+  <WebUI>http://[IP]:[PORT:8688]/</WebUI>
+  <TemplateURL/>
+  <Icon>http://192.168.1.100:8688/mesatztv-icon.png</Icon>
+  <ExtraParams>--runtime=nvidia</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Turn your media library into scheduled 24/7 live TV channels. NVIDIA GPU passthrough enabled (requires the Nvidia-Driver plugin). The image is private on GHCR — run `docker login ghcr.io` once on Unraid before installing.</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8688</HostPort>
+        <ContainerPort>8688</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/media</HostDir>
+      <ContainerDir>/media</ContainerDir>
+      <Mode>ro</Mode>
+    </Volume>
+    <Volume>
+      <HostDir>/mnt/user/appdata/mesatztv/data</HostDir>
+      <ContainerDir>/app/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>America/Chicago</Value>
+      <Name>TZ</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>all</Value>
+      <Name>NVIDIA_VISIBLE_DEVICES</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>all</Value>
+      <Name>NVIDIA_DRIVER_CAPABILITIES</Name>
+      <Mode/>
+    </Variable>
+  </Environment>
+  <Config Name="WebUI Port" Target="8688" Default="8688" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8688</Config>
+  <Config Name="Media Library" Target="/media" Default="/mnt/user/media" Mode="ro" Description="Your media library (mounted read-only). Add libraries in the app pointing at subfolders like /media/plex_media/movies." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media</Config>
+  <Config Name="App Data" Target="/app/data" Default="/mnt/user/appdata/mesatztv/data" Mode="rw" Description="Database + config (persistent)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/mesatztv/data</Config>
+  <Config Name="Timezone" Target="TZ" Default="America/Chicago" Mode="" Description="Timezone for schedules and the TV guide." Type="Variable" Display="always" Required="false" Mask="false">America/Chicago</Config>
+  <Config Name="NVIDIA GPUs" Target="NVIDIA_VISIBLE_DEVICES" Default="all" Mode="" Description="Which NVIDIA GPU(s) to expose: 'all' or a specific GPU UUID from `nvidia-smi -L`." Type="Variable" Display="always" Required="false" Mask="false">all</Config>
+  <Config Name="NVIDIA Capabilities" Target="NVIDIA_DRIVER_CAPABILITIES" Default="all" Mode="" Description="NVIDIA driver capabilities to enable." Type="Variable" Display="advanced" Required="false" Mask="false">all</Config>
+  <Config Name="Internal Port" Target="PORT" Default="8688" Mode="" Description="Port the app listens on inside the container." Type="Variable" Display="advanced" Required="false" Mask="false">8688</Config>
+  <Config Name="Database URL" Target="DATABASE_URL" Default="file:/app/data/mesatztv.db" Mode="" Description="Prisma SQLite database path." Type="Variable" Display="advanced" Required="false" Mask="false">file:/app/data/mesatztv.db</Config>
+</Container>

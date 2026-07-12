@@ -6,6 +6,7 @@ import { prisma } from './db.js'
 import { librariesRouter } from './routes/libraries.js'
 import { mediaRouter } from './routes/media.js'
 import { scanRouter } from './routes/scan.js'
+import { showsRouter } from './routes/shows.js'
 
 const app = express()
 const PORT = Number(process.env.PORT ?? 8688)
@@ -70,6 +71,7 @@ app.get('/api/stats', async (_req, res) => {
 app.use('/api/libraries', librariesRouter)
 app.use('/api/media', mediaRouter)
 app.use('/api/scan', scanRouter)
+app.use('/api/shows', showsRouter)
 
 // --- Static frontend (production only) --------------------------------------
 const publicDir = path.join(process.cwd(), 'public')

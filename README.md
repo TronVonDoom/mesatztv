@@ -8,8 +8,9 @@ Inspired by [ErsatzTV](https://ersatztv.org/), built to be simple to run and
 easy to update on Unraid.
 
 > **Status:** Milestone 2 — data + media indexing. The app scans your library
-> with ffprobe, parses Plex-style names into shows/episodes/movies, and browses
-> it all from the web UI. Scheduling, streaming, and overlays come next.
+> with ffprobe, parses Plex-style names, and lets you browse it Plex-style
+> (library → shows → seasons → episodes; movies with detail). Runs on Unraid via
+> a template with NVIDIA GPU passthrough. Scheduling & streaming come next.
 
 ---
 
@@ -50,14 +51,49 @@ node server/dist/index.js     # open http://localhost:8688
 
 ## Deploy on Unraid
 
-The whole point of this setup: **push to GitHub → pull on Unraid → rebuild.**
-No manual file copying, no image registry needed.
+Two options: a proper Unraid **template** that pulls a prebuilt image (nicer,
+with the WebUI button, icon, GPU, and Edit form), or **Docker Compose** that
+builds from source.
 
-### One-time setup
+### Option A — Unraid template + GHCR image (recommended)
+
+Every push to `main` triggers a GitHub Actions build that publishes the image to
+**`ghcr.io/tronvondoom/mesatztv:latest`**. Unraid just pulls it — no building on
+the server, and updates are one click.
+
+The image is **private**, so authenticate once, then add the template:
+
+1. **Log in to GHCR on Unraid** (one time). Create a GitHub token with
+   `read:packages` scope, then on the Unraid terminal:
+
+   ```bash
+   docker login ghcr.io -u TronVonDoom
+   # paste the token as the password
+   ```
+
+2. **Install the template.** Copy [`unraid/my-MeSatzTV.xml`](unraid/my-MeSatzTV.xml)
+   to `/boot/config/plugins/dockerMan/templates-user/my-MeSatzTV.xml` (e.g.
+   `curl -L -o /boot/config/plugins/dockerMan/templates-user/my-MeSatzTV.xml \
+   https://raw.githubusercontent.com/TronVonDoom/mesatztv/main/unraid/my-MeSatzTV.xml`).
+
+3. On the Unraid **Docker** tab → **Add Container** → pick **MeSatzTV** from the
+   template dropdown. Adjust the media path if needed, then **Apply**.
+
+**GPU:** the template sets `--runtime=nvidia` + `NVIDIA_VISIBLE_DEVICES=all`, so
+it uses your NVIDIA GPU for hardware transcoding (needs the **Nvidia-Driver**
+plugin). Set `NVIDIA_VISIBLE_DEVICES` to a specific GPU UUID (`nvidia-smi -L`)
+to pin one card.
+
+**Updating:** Docker tab → MeSatzTV → **Force Update** (or check for updates).
+It pulls the newest image built by CI.
+
+### Option B — Docker Compose (build from source)
 
 You'll need **git** and **docker compose** on Unraid. The easiest way is the
 **Compose Manager** plugin (Community Apps), which bundles `docker compose`.
-For `git`, install the **NerdTools** plugin and enable `git`.
+For `git`, install the **NerdTools** plugin and enable `git`. The compose file
+also enables the NVIDIA runtime — remove `runtime: nvidia` if you don't have an
+NVIDIA GPU.
 
 1. Open an Unraid terminal (or SSH in).
 
@@ -132,9 +168,10 @@ Volumes:
 3. Click **Scan**. A progress bar shows files being probed. The scanner reads
    duration/resolution/codecs via ffprobe and parses Plex-style names into
    show / season / episode / year / title.
-4. Browse everything under **Media** (search + filter by type/library).
-   Re-scanning is incremental — unchanged files are skipped, and files that
-   disappeared are flagged as missing.
+4. Browse everything under **Browse**, Plex-style: pick a library → TV shows
+   drill into seasons and episodes; movies open a detail panel. Re-scanning is
+   incremental — unchanged files are skipped, and files that disappeared are
+   flagged as missing.
 
 ## Roadmap
 

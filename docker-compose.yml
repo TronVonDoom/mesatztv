@@ -4,6 +4,10 @@ services:
     image: mesatztv:latest
     container_name: mesatztv
     restart: unless-stopped
+    # NVIDIA GPU passthrough for hardware transcoding (needs the Unraid
+    # Nvidia-Driver plugin / nvidia-container-runtime). Remove this line if the
+    # host has no NVIDIA GPU, or `docker compose up` will fail.
+    runtime: nvidia
     # Unraid Docker integration: WebUI button, icon, and console.
     # [IP]/[PORT:8688] are Unraid placeholders it substitutes automatically.
     # The icon is served by the container itself, so it works whether the repo
@@ -21,6 +25,8 @@ services:
       - TZ=America/Chicago
       - PORT=8688
       - DATABASE_URL=file:/app/data/mesatztv.db
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
     volumes:
       # Persistent app data (SQLite database + config) — keep this.
       - ./data:/app/data
