@@ -88,9 +88,28 @@ if (fs.existsSync(publicDir)) {
 }
 
 // --- Boot -------------------------------------------------------------------
-checkFfmpeg().then(() => {
+// One-time migration: turn any legacy single-path library into a folder row.
+async function backfillLibraryFolders(): Promise<void> {
+  const libs = await prisma.library.findMany({
+    where: { path: { not: null } },
+    include: { _count: { select: { folders: true } } },
+  })
+  for (const lib of libs) {
+    if (lib._count.folders === 0 && lib.path) {
+      await prisma.libraryFolder
+        .create({ data: { libraryId: lib.id, path: path.resolve(lib.path) } })
+        .catch(() => {})
+    }
+  }
+}
+
+async function boot(): Promise<void> {
+  await backfillLibraryFolders()
+  await checkFfmpeg()
   app.listen(PORT, () => {
     console.log(`MeSatzTV v${VERSION} listening on http://0.0.0.0:${PORT}`)
     console.log(`ffmpeg available: ${ffmpegAvailable}`)
   })
-})
+}
+
+boot()

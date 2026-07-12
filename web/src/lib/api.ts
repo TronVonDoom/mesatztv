@@ -16,12 +16,17 @@ export type Stats = {
 
 export type LibraryKind = 'tv' | 'movie' | 'other'
 
+export type LibraryFolder = {
+  id: number
+  path: string
+}
+
 export type Library = {
   id: number
   name: string
-  path: string
   kind: LibraryKind
   createdAt: string
+  folders: LibraryFolder[]
   itemCount: number
 }
 
@@ -126,10 +131,17 @@ export const api = {
   health: () => request<Health>('/api/health'),
   stats: () => request<Stats>('/api/stats'),
   libraries: () => request<Library[]>('/api/libraries'),
-  addLibrary: (data: { name: string; path: string; kind: LibraryKind }) =>
+  addLibrary: (data: { name: string; kind: LibraryKind; folders: string[] }) =>
     request<Library>('/api/libraries', { method: 'POST', body: JSON.stringify(data) }),
   deleteLibrary: (id: number) =>
     request<void>(`/api/libraries/${id}`, { method: 'DELETE' }),
+  addFolder: (libraryId: number, path: string) =>
+    request<LibraryFolder>(`/api/libraries/${libraryId}/folders`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  removeFolder: (libraryId: number, folderId: number) =>
+    request<void>(`/api/libraries/${libraryId}/folders/${folderId}`, { method: 'DELETE' }),
   startScan: (libraryId: number) =>
     request<{ started: boolean }>(`/api/scan/${libraryId}`, { method: 'POST' }),
   scanStatus: () => request<ScanStatus>('/api/scan/status'),

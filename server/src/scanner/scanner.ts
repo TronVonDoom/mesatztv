@@ -163,7 +163,10 @@ async function runPool<T>(items: T[], size: number, fn: (item: T) => Promise<voi
  * missing. Runs in the background; progress is exposed via getScanStatus().
  */
 export async function scanLibrary(libraryId: number): Promise<void> {
-  const library = await prisma.library.findUnique({ where: { id: libraryId } })
+  const library = await prisma.library.findUnique({
+    where: { id: libraryId },
+    include: { folders: true },
+  })
   if (!library) throw new Error(`Library ${libraryId} not found`)
 
   Object.assign(status, {
@@ -183,16 +186,22 @@ export async function scanLibrary(libraryId: number): Promise<void> {
   })
 
   try {
-    const files = await walk(library.path)
-    status.total = files.length
+    // Walk every folder in the library; remember which root each file came from
+    // so parsing/artwork use the correct relative root.
+    const found: { file: string; root: string }[] = []
+    for (const folder of library.folders) {
+      const files = await walk(folder.path)
+      for (const f of files) found.push({ file: f, root: folder.path })
+    }
+    status.total = found.length
 
     const dirCache: DirCache = new Map()
-    await runPool(files, PROBE_CONCURRENCY, (f) =>
-      processFile(f, library.id, library.path, library.kind as LibraryKind, dirCache),
+    await runPool(found, PROBE_CONCURRENCY, ({ file, root }) =>
+      processFile(file, library.id, root, library.kind as LibraryKind, dirCache),
     )
 
     // Anything in this library not seen in this scan pass is now missing.
-    const seen = new Set(files)
+    const seen = new Set(found.map((f) => f.file))
     const known = await prisma.mediaItem.findMany({
       where: { libraryId: library.id, missing: false },
       select: { id: true, path: true },
