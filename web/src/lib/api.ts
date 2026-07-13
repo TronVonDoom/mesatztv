@@ -169,6 +169,26 @@ export type CollectionItem = {
   order: number
 }
 
+export type Filler = {
+  id: number
+  collectionId: number
+  name: string | null
+  style: 'animated' | 'frosted' | 'custom'
+  assetId: number | null
+  audioAssetId: number | null
+  durationMode: 'fixed' | 'audio'
+  durationSec: number
+  order: number
+}
+export type FillerInput = {
+  name?: string | null
+  style: 'animated' | 'frosted' | 'custom'
+  assetId?: number | null
+  audioAssetId?: number | null
+  durationMode: 'fixed' | 'audio'
+  durationSec: number
+}
+
 export type Collection = {
   id: number
   name: string
@@ -180,6 +200,7 @@ export type Collection = {
   filterSearch: string | null
   filterGenre: string | null
   items: CollectionItem[]
+  fillers: Filler[]
   itemCount: number
 }
 
@@ -423,6 +444,12 @@ export const api = {
     }),
   deleteCollectionItem: (collectionId: number, itemId: number) =>
     request<void>(`/api/collections/${collectionId}/items/${itemId}`, { method: 'DELETE' }),
+  addFiller: (collectionId: number, data: FillerInput) =>
+    request<Filler>(`/api/collections/${collectionId}/fillers`, { method: 'POST', body: JSON.stringify(data) }),
+  updateFiller: (collectionId: number, fillerId: number, data: FillerInput) =>
+    request<Filler>(`/api/collections/${collectionId}/fillers/${fillerId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteFiller: (collectionId: number, fillerId: number) =>
+    request<void>(`/api/collections/${collectionId}/fillers/${fillerId}`, { method: 'DELETE' }),
 
   // --- channels ---
   channels: () => request<Channel[]>('/api/channels'),

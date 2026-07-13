@@ -122,10 +122,29 @@ model Collection {
   filterGenre  String? // genre contains
   createdAt    DateTime         @default(now())
   items        CollectionItem[]
+  fillers      Filler[]
   rotationItems RotationItem[]
   timeBlocks   TimeBlock[]
 
   @@index([channelId])
+}
+
+// A branded interstitial for a collection — played during gaps in a block using
+// that collection. A collection can have several (a pool the stream rotates).
+model Filler {
+  id           Int        @id @default(autoincrement())
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collectionId Int
+  name         String?
+  style        String     @default("frosted") // "animated" | "frosted" | "custom"
+  assetId      Int? // custom visual (Asset kind "filler"); null for generated styles
+  audioAssetId Int? // ambient audio (Asset kind "audio"); loops under the visual
+  durationMode String     @default("fixed") // "fixed" | "audio" (match the audio length)
+  durationSec  Int        @default(30)
+  order        Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  @@index([collectionId])
 }
 
 // A hand-picked member of a collection: a whole show, or a single movie.

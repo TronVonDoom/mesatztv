@@ -4,10 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import type { Request, Response } from 'express'
-import type { Channel, TimeBlock } from '@prisma/client'
 import { prisma } from './db.js'
 import { buildPlayout, prunePlayout } from './playout.js'
-import { dataDir, logosDir } from './paths.js'
+import { assetsDir, dataDir, logosDir } from './paths.js'
 import { log } from './logs.js'
 
 // Fixed canvas for generated filler clips (playback scales them to the channel's
@@ -304,8 +303,9 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamPro
   return a
 }
 
-// Which logo applies at a given time (block override, else channel default).
-function activeBlockAt(blocks: TimeBlock[], date: Date): TimeBlock | null {
+// The block active at a given local time (first match wins). Generic so callers
+// keep whatever relations they included (collection, fillers, …).
+function activeBlockAt<T extends { days: string; startMinute: number; endMinute: number }>(blocks: T[], date: Date): T | null {
   const day = date.getDay()
   const prev = (day + 6) % 7
   const tod = date.getHours() * 60 + date.getMinutes()
@@ -321,17 +321,17 @@ function activeBlockAt(blocks: TimeBlock[], date: Date): TimeBlock | null {
   return null
 }
 
-// The logo active at a given time (block override, else channel default).
-// Returns the Logo row id (so we can use its per-logo watermark settings) and
-// the raw file path / URL to overlay.
+// The logo active at a given time: block override → the block's collection logo
+// → channel default. Returns the Logo row id (for its per-logo watermark) and the
+// raw file path / URL to overlay.
 function activeLogo(
-  channel: Channel,
-  blocks: TimeBlock[],
+  channel: { logoId: number | null; logoUrl: string | null },
+  blocks: Array<{ days: string; startMinute: number; endMinute: number; logoId: number | null; logoUrl: string | null; collection: { logoId: number | null } }>,
   logoPath: Map<number, string>,
   at: Date,
 ): { id: number | null; raw: string | null } {
   const block = activeBlockAt(blocks, at)
-  const id = block?.logoId ?? channel.logoId
+  const id = block?.logoId ?? block?.collection.logoId ?? channel.logoId
   if (id != null && logoPath.has(id)) return { id, raw: logoPath.get(id) as string }
   return { id: null, raw: block?.logoUrl || channel.logoUrl || null }
 }
@@ -376,48 +376,49 @@ function runFfmpeg(args: string[]): Promise<void> {
   })
 }
 
-const FILLER_D = 30
+const clampDur = (d: number) => Math.max(5, Math.min(600, Math.round(d) || 30))
+
 // Preferred look: a drifting color gradient with a slow hue sway, animated
 // grain and a vignette (visible motion to keep viewers hanging tight). Loops
 // smoothly (hue uses a sine that returns to 0 at the end).
-function fillerArgsAnimated(out: string): string[] {
+function fillerArgsAnimated(out: string, dur: number): string[] {
   return [
     '-y',
-    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${FILLER_D}:speed=0.05:c0=0x0b1020:c1=0x3b1d60:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4`,
-    '-f', 'lavfi', '-i', `sine=f=110:d=${FILLER_D},volume=0.05`,
+    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${dur}:speed=0.05:c0=0x0b1020:c1=0x3b1d60:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4`,
+    '-f', 'lavfi', '-i', `sine=f=110:d=${dur},volume=0.05`,
     '-filter_complex',
-    `[0:v]hue=H='0.5*sin(2*PI*t/${FILLER_D})':s='1.05+0.05*sin(2*PI*t/${FILLER_D})',noise=alls=6:allf=t,vignette=PI/4.5,fps=${FPS},format=yuv420p[v]`,
+    `[0:v]hue=H='0.5*sin(2*PI*t/${dur})':s='1.05+0.05*sin(2*PI*t/${dur})',noise=alls=6:allf=t,vignette=PI/4.5,fps=${FPS},format=yuv420p[v]`,
     '-map', '[v]', '-map', '1:a',
     '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
   ]
 }
 // Proven fallback (the original) in case a filter isn't available on this build.
-function fillerArgsBasic(out: string): string[] {
+function fillerArgsBasic(out: string, dur: number): string[] {
   return [
     '-y',
-    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=20:speed=0.02:c0=0x111827:c1=0x4c1d95:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4`,
-    '-f', 'lavfi', '-i', 'sine=f=98:d=20,volume=0.06',
+    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${dur}:speed=0.02:c0=0x111827:c1=0x4c1d95:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4`,
+    '-f', 'lavfi', '-i', `sine=f=98:d=${dur},volume=0.06`,
     '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
   ]
 }
 
 /** Generate a loopable ambient "please stand by" clip (animated, with a fallback). */
-export async function generateFiller(out: string): Promise<void> {
+export async function generateFiller(out: string, dur = 30): Promise<void> {
+  const d = clampDur(dur)
   try {
-    await runFfmpeg(fillerArgsAnimated(out))
+    await runFfmpeg(fillerArgsAnimated(out, d))
   } catch (e) {
     log('warn', 'system', 'Animated filler failed, using basic gradient fallback', String(e))
-    await runFfmpeg(fillerArgsBasic(out))
+    await runFfmpeg(fillerArgsBasic(out, d))
   }
 }
 
 // Frosted-glass scene: rows of the channel + MeSatzTV logos scrolling opposite
 // ways behind a blurred glass panel, with the channel logo sharp on the left and
 // the MeSatzTV logo on the right in front. Composed per channel (needs its logo).
-function frostedArgs(out: string, channelLogo: string, mzLogo: string): string[] {
-  const D = 30
+function frostedArgs(out: string, channelLogo: string, mzLogo: string, D: number): string[] {
   const rowH = 90
   const cellW = 260
   const nTile = 8 // strip wide enough to cover the screen + one cell while scrolling
@@ -460,8 +461,8 @@ function frostedArgs(out: string, channelLogo: string, mzLogo: string): string[]
   ]
 }
 
-export function generateFrostedFiller(out: string, channelLogo: string, mzLogo: string): Promise<void> {
-  return runFfmpeg(frostedArgs(out, channelLogo, mzLogo))
+export function generateFrostedFiller(out: string, channelLogo: string, mzLogo: string, dur = 30): Promise<void> {
+  return runFfmpeg(frostedArgs(out, channelLogo, mzLogo, clampDur(dur)))
 }
 
 function mesatztvLogoFile(): string {
@@ -470,23 +471,39 @@ function mesatztvLogoFile(): string {
 }
 
 // Bump these when the generators change so persisted clips regenerate.
-const FILLER_VERSION = 2
-const FROSTED_VERSION = 1
+const FILLER_VERSION = 3
+const FROSTED_VERSION = 2
 
 const getSettingVal = async (k: string): Promise<string | undefined> =>
   (await prisma.setting.findUnique({ where: { key: k } }))?.value ?? undefined
 
-function autoFillerPath(): string {
-  return path.join(dataDir(), `filler-auto-v${FILLER_VERSION}.mp4`)
+// ffprobe a media file's duration in seconds (0 on failure).
+function probeDuration(file: string): Promise<number> {
+  return new Promise((resolve) => {
+    let out = ''
+    const p = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file])
+    p.stdout?.on('data', (d) => (out += d))
+    p.on('error', () => resolve(0))
+    p.on('close', () => resolve(parseFloat(out.trim()) || 0))
+  })
 }
 
-// The persisted animated default (used directly, and as the fallback for the
-// other styles if their generation fails).
-async function ensureAnimatedFiller(): Promise<string | undefined> {
-  const out = autoFillerPath()
+// Resolve an Asset id to its on-disk file (or undefined).
+async function assetFilePath(id: number | null | undefined): Promise<string | undefined> {
+  if (id == null) return undefined
+  const a = await prisma.asset.findUnique({ where: { id } })
+  if (!a) return undefined
+  const f = path.join(assetsDir(), a.filename)
+  return fs.existsSync(f) ? f : undefined
+}
+
+// Animated filler for a given loop length (persisted, keyed by duration).
+async function ensureAnimatedFiller(dur = 30): Promise<string | undefined> {
+  const d = clampDur(dur)
+  const out = path.join(dataDir(), `filler-anim-v${FILLER_VERSION}-d${d}.mp4`)
   if (fs.existsSync(out)) return out
-  log('info', 'system', 'Generating default animated filler clip (one-time)…')
-  const ok = await generateFiller(out)
+  log('info', 'system', `Generating animated filler (${d}s)…`)
+  const ok = await generateFiller(out, d)
     .then(() => true)
     .catch((e) => {
       log('error', 'system', 'Filler generation failed', String(e))
@@ -495,20 +512,20 @@ async function ensureAnimatedFiller(): Promise<string | undefined> {
   return ok && fs.existsSync(out) ? out : undefined
 }
 
-// Per-channel frosted-glass filler, cached by the channel logo (path + mtime so
-// a logo change regenerates it).
-async function ensureFrostedFiller(channelLogo: string): Promise<string | undefined> {
+// Frosted-glass filler, cached by logo (path + mtime) and duration.
+async function ensureFrostedFiller(logoFile: string, dur = 30): Promise<string | undefined> {
+  const d = clampDur(dur)
   let mtime = 0
   try {
-    mtime = fs.statSync(channelLogo).mtimeMs
+    mtime = fs.statSync(logoFile).mtimeMs
   } catch {
     /* ignore */
   }
-  const key = createHash('md5').update(`${channelLogo}:${Math.round(mtime)}:v${FROSTED_VERSION}`).digest('hex')
+  const key = createHash('md5').update(`${logoFile}:${Math.round(mtime)}:${d}:v${FROSTED_VERSION}`).digest('hex')
   const out = path.join(dataDir(), `filler-frosted-${key}.mp4`)
   if (fs.existsSync(out)) return out
-  log('info', 'system', `Generating frosted-glass filler for logo ${path.basename(channelLogo)} (one-time)…`)
-  const ok = await generateFrostedFiller(out, channelLogo, mesatztvLogoFile())
+  log('info', 'system', `Generating frosted-glass filler for logo ${path.basename(logoFile)} (${d}s)…`)
+  const ok = await generateFrostedFiller(out, logoFile, mesatztvLogoFile(), d)
     .then(() => true)
     .catch((e) => {
       log('warn', 'system', 'Frosted filler generation failed — falling back to animated', String(e))
@@ -517,8 +534,30 @@ async function ensureFrostedFiller(channelLogo: string): Promise<string | undefi
   return ok && fs.existsSync(out) ? out : undefined
 }
 
-// Resolve the filler clip for a channel based on the chosen style:
-// custom (a user/uploaded clip), frosted (per-channel composite), else animated.
+type FillerRow = { style: string; assetId: number | null; audioAssetId: number | null; durationMode: string; durationSec: number }
+
+// Resolve a collection Filler to a clip + optional looping music, branded with
+// the collection/block logo (frosted). Falls back to animated on any failure.
+async function resolveCollectionFiller(f: FillerRow, logoFile: string | undefined): Promise<{ clip?: string; music?: string }> {
+  const music = await assetFilePath(f.audioAssetId)
+  let dur = clampDur(f.durationSec)
+  if (f.durationMode === 'audio' && music) {
+    const probed = await probeDuration(music)
+    if (probed > 1) dur = clampDur(probed)
+  }
+  if (f.style === 'custom') {
+    const clip = await assetFilePath(f.assetId)
+    return { clip: clip ?? (await ensureAnimatedFiller(dur)), music }
+  }
+  if (f.style === 'frosted' && logoFile) {
+    const clip = await ensureFrostedFiller(logoFile, dur)
+    return { clip: clip ?? (await ensureAnimatedFiller(dur)), music }
+  }
+  return { clip: await ensureAnimatedFiller(dur), music }
+}
+
+// Global fallback filler (used when a collection has no fillers of its own),
+// based on the global style setting.
 async function getFillerClip(channelLogo?: string): Promise<string | undefined> {
   const style = (await getSettingVal('filler_style')) || 'animated'
   if (style === 'custom') {
@@ -531,30 +570,40 @@ async function getFillerClip(channelLogo?: string): Promise<string | undefined> 
   return ensureAnimatedFiller()
 }
 
-// Optional ambient music played during intermissions (loops under the filler).
+// Optional global ambient music (loops under the fallback filler).
 async function getFillerMusic(): Promise<string | undefined> {
   const s = await prisma.setting.findUnique({ where: { key: 'filler_music' } })
   return s?.value && fs.existsSync(s.value) ? s.value : undefined
 }
 
 /**
- * Pre-build filler at boot so an intermission never blocks on generation. Always
- * warms the animated default; if the frosted style is active, also warms a clip
- * for each channel's logo.
+ * Pre-build filler at boot so an intermission never blocks on generation: the
+ * animated default, the global frosted-per-channel (if selected), and every
+ * collection's own fillers.
  */
 export async function warmFiller(): Promise<void> {
-  const animated = await ensureAnimatedFiller().catch(() => undefined)
+  const animated = await ensureAnimatedFiller(30).catch(() => undefined)
   if (animated) log('info', 'system', `Animated filler ready: ${animated}`)
   else log('warn', 'system', 'No filler clip available — gaps will play black')
 
+  const logos = await prisma.logo.findMany()
+  const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
+  const logoFileFor = (logoId: number | null, logoUrl: string | null) =>
+    localLogo(logoId != null && logoPath.has(logoId) ? logoPath.get(logoId) ?? null : logoUrl || null)
+
   if ((await getSettingVal('filler_style')) === 'frosted') {
-    const [channels, logos] = await Promise.all([prisma.channel.findMany(), prisma.logo.findMany()])
-    const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
-    for (const ch of channels) {
-      const raw = ch.logoId != null && logoPath.has(ch.logoId) ? logoPath.get(ch.logoId) ?? null : ch.logoUrl || null
-      const file = await localLogo(raw)
+    for (const ch of await prisma.channel.findMany()) {
+      const file = await logoFileFor(ch.logoId, ch.logoUrl)
       if (file) await ensureFrostedFiller(file).catch(() => {})
     }
+  }
+
+  // Per-collection fillers (using the collection logo, else its channel's).
+  const collections = await prisma.collection.findMany({ include: { fillers: true, channel: true } })
+  for (const c of collections) {
+    if (c.fillers.length === 0) continue
+    const file = await logoFileFor(c.logoId ?? c.channel?.logoId ?? null, c.channel?.logoUrl ?? null)
+    for (const f of c.fillers) await resolveCollectionFiller(f, file).catch(() => {})
   }
 }
 
@@ -616,7 +665,11 @@ const viewers = new Map<number, number>()
 export async function streamChannel(channelNumber: number, res: Response, req?: Request): Promise<void> {
   const channel = await prisma.channel.findFirst({
     where: { number: channelNumber },
-    include: { timeBlocks: true, rotationItems: true, profile: true },
+    include: {
+      timeBlocks: { include: { collection: { include: { fillers: { orderBy: { order: 'asc' } } } } } },
+      rotationItems: true,
+      profile: true,
+    },
   })
   if (!channel) {
     log('warn', 'stream', `Rejected stream: channel ${channelNumber} not found (${clientInfo(req)})`)
@@ -740,12 +793,25 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
 
         if (item.kind === 'filler' || !mi) {
           const genStart = Date.now()
-          const fp = await getFillerClip(logo)
+          // Prefer the active block's collection filler pool; else the global fallback.
+          const poolBlock = activeBlockAt(channel.timeBlocks, item.startTime)
+          const pool = poolBlock?.collection.fillers ?? []
+          let clip: string | undefined
+          let music: string | undefined
+          if (pool.length > 0) {
+            const f = pool[Math.floor(item.startTime.getTime() / 1000) % pool.length]
+            const r = await resolveCollectionFiller(f, logo)
+            clip = r.clip
+            music = r.music
+          } else {
+            clip = await getFillerClip(logo)
+            music = fillerMusic
+          }
           const genMs = Date.now() - genStart
-          if (genMs > 500) log('warn', 'system', `Channel ${channelNumber}: filler clip resolve blocked ${genMs}ms (should be pre-warmed)`)
-          if (fp && segDur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, wmEpochSec, mediaWidth: W, mediaHeight: H, musicPath: fillerMusic, tsOffsetSec: tsOffset }
-          label = `filler (${Math.round(segDur)}s)${fillerMusic ? ' +music' : ''}`
-          if (!fp) log('error', 'stream', `Channel ${channelNumber}: no filler clip — a ${Math.round(segDur)}s gap will play black`)
+          if (genMs > 500) log('warn', 'system', `Channel ${channelNumber}: filler resolve blocked ${genMs}ms (should be pre-warmed)`)
+          if (clip && segDur > 0.3) seg = { filePath: clip, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, wmEpochSec, mediaWidth: W, mediaHeight: H, musicPath: music, tsOffsetSec: tsOffset }
+          label = `filler (${Math.round(segDur)}s)${music ? ' +music' : ''}${pool.length ? ' [collection]' : ''}`
+          if (!clip) log('error', 'stream', `Channel ${channelNumber}: no filler clip — a ${Math.round(segDur)}s gap will play black`)
         } else if (fs.existsSync(mi.path)) {
           seg = { filePath: mi.path, offsetSec: offset, loop: false, durationSec: segDur, hasAudio: !!mi.audioCodec, logo, wmEpochSec, mediaWidth: mi.width ?? W, mediaHeight: mi.height ?? H, tsOffsetSec: tsOffset }
           label = mi.showTitle
