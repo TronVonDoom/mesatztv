@@ -62,8 +62,10 @@ function ffmpegArgs(seg: Segment, enc: string): string[] {
   }
   if (seg.durationSec) a.push('-t', seg.durationSec.toFixed(3))
 
+  // De-anamorphize (scale=iw*sar:ih) so non-square-pixel sources (e.g. 720x480
+  // DVD content) aren't horizontally stretched, then fit+letterbox to 1280x720.
   // Reset per-segment timestamps so concatenated segments stay in sync.
-  const base = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,setpts=PTS-STARTPTS`
+  const base = `[0:v]scale=iw*sar:ih,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,setpts=PTS-STARTPTS`
   const vf =
     logoIdx >= 0
       ? `${base}[bg];[${logoIdx}:v]scale=-2:64[lg];[bg][lg]overlay=W-w-32:24[v]`
