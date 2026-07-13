@@ -14,11 +14,8 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex">
       <aside className="w-56 shrink-0 border-r border-slate-800 bg-slate-900/40 flex flex-col">
-        <div className="flex items-center gap-2 px-5 py-5 border-b border-slate-800">
-          <span className="text-2xl">📺</span>
-          <span className="text-lg font-bold tracking-tight">
-            Me<span className="text-indigo-400">Satz</span>TV
-          </span>
+        <div className="px-4 py-5 border-b border-slate-800">
+          <img src="/logo-wide.png" alt="MeSatzTV" className="w-full max-w-[190px]" />
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {navItems.map((item) => (
