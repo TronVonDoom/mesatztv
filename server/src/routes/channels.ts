@@ -4,6 +4,9 @@ import { buildPlayout, prunePlayout, resetPlayout } from '../playout.js'
 
 export const channelsRouter = Router()
 
+const ORDERS = ['chronological', 'shuffle', 'rotate']
+const asOrder = (v: unknown) => (ORDERS.includes(String(v)) ? String(v) : 'chronological')
+
 channelsRouter.get('/', async (_req, res) => {
   const chs = await prisma.channel.findMany({
     orderBy: { number: 'asc' },
@@ -64,7 +67,7 @@ channelsRouter.post('/:id/rotation', async (req, res) => {
       channelId,
       collectionId: Number(collectionId),
       order: (max._max.order ?? -1) + 1,
-      playbackOrder: playbackOrder === 'shuffle' ? 'shuffle' : 'chronological',
+      playbackOrder: asOrder(playbackOrder),
       mode: mode === 'multiple' ? 'multiple' : 'one',
       count: count ? Math.max(1, Number(count)) : 1,
     },
@@ -94,7 +97,7 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
       days: String(days),
       startMinute: Number(startMinute),
       endMinute: Number(endMinute),
-      playbackOrder: playbackOrder === 'shuffle' ? 'shuffle' : 'chronological',
+      playbackOrder: asOrder(playbackOrder),
     },
   })
   res.status(201).json(b)

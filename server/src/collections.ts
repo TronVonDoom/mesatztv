@@ -11,7 +11,7 @@ export type CollectionFilter = {
 
 export type CollectionWithItems = Prisma.CollectionGetPayload<{ include: { items: true } }>
 
-export type PlaybackOrder = 'chronological' | 'shuffle'
+export type PlaybackOrder = 'chronological' | 'shuffle' | 'rotate'
 
 // Only playable items: present on disk and with a known duration.
 export function collectionWhere(c: CollectionFilter): Prisma.MediaItemWhereInput {
@@ -110,15 +110,50 @@ function seededShuffle<T extends { id: number }>(arr: T[], seed: number): T[] {
     .map((o) => o.x)
 }
 
+// Order within a single show/group: season, episode, year, title.
+function byEpisode(a: MediaItem, b: MediaItem): number {
+  return (
+    (a.season ?? 0) - (b.season ?? 0) ||
+    (a.episode ?? 0) - (b.episode ?? 0) ||
+    (a.year ?? 0) - (b.year ?? 0) ||
+    a.title.localeCompare(b.title)
+  )
+}
+
 function chronological(items: MediaItem[]): MediaItem[] {
   return [...items].sort(
-    (a, b) =>
-      (a.showTitle ?? '').localeCompare(b.showTitle ?? '') ||
-      (a.season ?? 0) - (b.season ?? 0) ||
-      (a.episode ?? 0) - (b.episode ?? 0) ||
-      (a.year ?? 0) - (b.year ?? 0) ||
-      a.title.localeCompare(b.title),
+    (a, b) => (a.showTitle ?? '').localeCompare(b.showTitle ?? '') || byEpisode(a, b),
   )
+}
+
+// Round-robin across shows: one episode from each show in turn, each show
+// advancing in episode order, looping until every item is placed. Movies (no
+// show) each form their own single-item group so they interleave individually.
+function rotateShows(items: MediaItem[]): MediaItem[] {
+  const groups = new Map<string, MediaItem[]>()
+  for (const m of items) {
+    const key = m.showTitle ? 'show:' + m.showTitle : 'item:' + m.id
+    const g = groups.get(key)
+    if (g) g.push(m)
+    else groups.set(key, [m])
+  }
+  const lists = [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, arr]) => arr.sort(byEpisode))
+
+  const pointers = new Array(lists.length).fill(0)
+  const result: MediaItem[] = []
+  let remaining = items.length
+  while (remaining > 0) {
+    for (let g = 0; g < lists.length; g++) {
+      if (pointers[g] < lists[g].length) {
+        result.push(lists[g][pointers[g]])
+        pointers[g]++
+        remaining--
+      }
+    }
+  }
+  return result
 }
 
 /** Resolve a collection to an ordered, playable list of media items. */
@@ -128,5 +163,7 @@ export async function resolveCollection(
   seed = 0,
 ): Promise<MediaItem[]> {
   const items = await resolveMembers(c)
-  return order === 'shuffle' ? seededShuffle(items, seed) : chronological(items)
+  if (order === 'shuffle') return seededShuffle(items, seed)
+  if (order === 'rotate') return rotateShows(items)
+  return chronological(items)
 }

@@ -183,6 +183,7 @@ export default function ChannelEditor() {
             )}
             <select className={input} value={rot.playbackOrder} onChange={(e) => setRot({ ...rot, playbackOrder: e.target.value })}>
               <option value="chronological">in order</option>
+              <option value="rotate">rotate shows</option>
               <option value="shuffle">shuffle</option>
             </select>
             <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-3 py-2 text-sm font-medium">Add</button>
@@ -232,6 +233,7 @@ export default function ChannelEditor() {
               <input className={input} type="time" value={blk.end} onChange={(e) => setBlk({ ...blk, end: e.target.value })} />
               <select className={input} value={blk.playbackOrder} onChange={(e) => setBlk({ ...blk, playbackOrder: e.target.value })}>
                 <option value="chronological">in order</option>
+                <option value="rotate">rotate shows</option>
                 <option value="shuffle">shuffle</option>
               </select>
               <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-3 py-2 text-sm font-medium">Add</button>
