@@ -28,6 +28,17 @@ model Setting {
   value String
 }
 
+// An uploaded logo/watermark image, reusable across channels and blocks.
+model Logo {
+  id        Int         @id @default(autoincrement())
+  name      String
+  filename  String // stored under the data dir /logos
+  mime      String
+  createdAt DateTime    @default(now())
+  channels  Channel[]
+  blocks    TimeBlock[]
+}
+
 // Show-level metadata (one row per distinct show title in a TV library).
 model Show {
   id               Int      @id @default(autoincrement())
@@ -96,7 +107,9 @@ model Channel {
   number        Int            @unique
   name          String
   group         String?
-  logoUrl       String? // guide logo + default on-screen watermark
+  logoUrl       String? // legacy free-form logo URL (fallback)
+  logo          Logo?          @relation(fields: [logoId], references: [id], onDelete: SetNull)
+  logoId        Int?
   createdAt     DateTime       @default(now())
   // Playout build state (see playout engine).
   playoutAnchor DateTime?
@@ -133,7 +146,9 @@ model TimeBlock {
   collection    Collection @relation(fields: [collectionId], references: [id])
   collectionId  Int
   playbackOrder String     @default("chronological")
-  logoUrl       String? // on-screen watermark while this block airs (else channel logo)
+  logoUrl       String? // legacy free-form logo URL (fallback)
+  logo          Logo?      @relation(fields: [logoId], references: [id], onDelete: SetNull)
+  logoId        Int?
   fillerMode    String     @default("none") // "none" | "between" | "end"
 
   @@index([channelId])

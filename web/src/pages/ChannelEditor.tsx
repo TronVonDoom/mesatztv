@@ -4,8 +4,10 @@ import {
   api,
   formatDays,
   minutesToTime,
+  logoImageUrl,
   type ChannelDetail,
   type Collection,
+  type Logo,
   type Playout,
 } from '../lib/api'
 
@@ -47,15 +49,17 @@ export default function ChannelEditor() {
   const [error, setError] = useState<string | null>(null)
   const [building, setBuilding] = useState(false)
 
-  const [chForm, setChForm] = useState({ name: '', group: '', logoUrl: '' })
+  const [logos, setLogos] = useState<Logo[]>([])
+  const [chForm, setChForm] = useState<{ name: string; group: string; logoUrl: string; logoId: number | null }>({ name: '', group: '', logoUrl: '', logoId: null })
   const [rot, setRot] = useState({ collectionId: '', mode: 'one', count: '1', playbackOrder: 'chronological' })
-  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; fillerMode: string }>({
+  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; logoId: number | null; fillerMode: string }>({
     collectionId: '',
     days: [1, 2, 3, 4, 5],
     start: '18:00',
     end: '21:00',
     playbackOrder: 'chronological',
     logoUrl: '',
+    logoId: null,
     fillerMode: 'none',
   })
   const [editingBlock, setEditingBlock] = useState<number | null>(null)
@@ -68,11 +72,12 @@ export default function ChannelEditor() {
       .channel(channelId)
       .then((c) => {
         setCh(c)
-        setChForm({ name: c.name, group: c.group ?? '', logoUrl: c.logoUrl ?? '' })
+        setChForm({ name: c.name, group: c.group ?? '', logoUrl: c.logoUrl ?? '', logoId: c.logoId ?? null })
       })
       .catch(() => {})
     loadPlayout()
     api.collections().then(setCols).catch(() => {})
+    api.logos().then(setLogos).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId])
 
@@ -83,6 +88,7 @@ export default function ChannelEditor() {
         name: chForm.name,
         group: chForm.group || null,
         logoUrl: chForm.logoUrl || null,
+        logoId: chForm.logoId,
       }),
     )
   }
@@ -113,7 +119,7 @@ export default function ChannelEditor() {
 
   function resetBlockForm() {
     setEditingBlock(null)
-    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', fillerMode: 'none' })
+    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', logoId: null, fillerMode: 'none' })
   }
 
   function editBlock(b: ChannelDetail['timeBlocks'][number]) {
@@ -125,6 +131,7 @@ export default function ChannelEditor() {
       end: minToTimeStr(b.endMinute),
       playbackOrder: b.playbackOrder,
       logoUrl: b.logoUrl ?? '',
+      logoId: b.logoId ?? null,
       fillerMode: b.fillerMode ?? 'none',
     })
   }
@@ -142,6 +149,7 @@ export default function ChannelEditor() {
       endMinute: timeToMin(blk.end),
       playbackOrder: blk.playbackOrder,
       logoUrl: blk.logoUrl || null,
+      logoId: blk.logoId,
       fillerMode: blk.fillerMode,
     }
     await guard(() =>
@@ -210,18 +218,23 @@ export default function ChannelEditor() {
             <input className={input} placeholder="Entertainment" value={chForm.group} onChange={(e) => setChForm({ ...chForm, group: e.target.value })} />
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-slate-400">Logo URL</span>
+            <span className="text-slate-400">Logo</span>
             <div className="flex gap-2 items-center">
-              <input className={input + ' flex-1 min-w-0'} placeholder="https://…/logo.png" value={chForm.logoUrl} onChange={(e) => setChForm({ ...chForm, logoUrl: e.target.value })} />
-              {chForm.logoUrl && (
-                <img src={chForm.logoUrl} alt="" className="w-9 h-9 rounded object-contain bg-slate-950 border border-slate-800 shrink-0" onError={(ev) => ((ev.target as HTMLImageElement).style.visibility = 'hidden')} />
+              <select className={input + ' flex-1 min-w-0'} value={chForm.logoId ?? ''} onChange={(e) => setChForm({ ...chForm, logoId: e.target.value ? Number(e.target.value) : null })}>
+                <option value="">No logo</option>
+                {logos.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+              {chForm.logoId && (
+                <img src={logoImageUrl(chForm.logoId)} alt="" className="w-9 h-9 rounded object-contain bg-slate-950 border border-slate-800 shrink-0" />
               )}
             </div>
           </label>
           <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-4 py-2 text-sm font-medium">Save</button>
         </div>
         <p className="text-xs text-slate-500 mt-2">
-          Logo shows in the guide (M3U/XMLTV) and is the default on-screen watermark. Time blocks can override the on-screen logo (rendered once live streaming lands).
+          Upload logos under <Link to="/logos" className="text-indigo-300">Logos</Link>. The channel logo shows in the guide and is the on-screen watermark; time blocks can override it.
         </p>
       </form>
 
@@ -276,7 +289,7 @@ export default function ChannelEditor() {
                   <div className="truncate">{b.collection.name}</div>
                   <div className="text-xs text-slate-500">
                     {formatDays(b.days)} · {minutesToTime(b.startMinute)}–{minutesToTime(b.endMinute)} · {b.playbackOrder}
-                    {b.logoUrl && ' · 🖼 logo'}
+                    {(b.logoId || b.logoUrl) && ' · 🖼 logo'}
                     {b.fillerMode && b.fillerMode !== 'none' && ` · filler: ${b.fillerMode}`}
                   </div>
                 </div>
@@ -302,12 +315,16 @@ export default function ChannelEditor() {
                 )
               })}
             </div>
-            <input
+            <select
               className={input + ' w-full'}
-              placeholder="On-screen logo URL (optional — defaults to channel logo)"
-              value={blk.logoUrl}
-              onChange={(e) => setBlk({ ...blk, logoUrl: e.target.value })}
-            />
+              value={blk.logoId ?? ''}
+              onChange={(e) => setBlk({ ...blk, logoId: e.target.value ? Number(e.target.value) : null })}
+            >
+              <option value="">On-screen logo: use channel logo</option>
+              {logos.map((l) => (
+                <option key={l.id} value={l.id}>Logo: {l.name}</option>
+              ))}
+            </select>
             <div className="flex flex-wrap gap-2 items-end">
               <select className={input + ' flex-1 min-w-32'} value={blk.collectionId} onChange={(e) => setBlk({ ...blk, collectionId: e.target.value })} required>
                 <option value="">Collection…</option>

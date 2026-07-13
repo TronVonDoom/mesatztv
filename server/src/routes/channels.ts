@@ -78,11 +78,12 @@ channelsRouter.get('/:id', async (req, res) => {
 
 channelsRouter.patch('/:id', async (req, res) => {
   const id = Number(req.params.id)
-  const { name, group, logoUrl, number } = req.body ?? {}
-  const data: { name?: string; group?: string | null; logoUrl?: string | null; number?: number } = {}
+  const { name, group, logoUrl, number, logoId } = req.body ?? {}
+  const data: { name?: string; group?: string | null; logoUrl?: string | null; number?: number; logoId?: number | null } = {}
   if (name !== undefined) data.name = String(name).trim()
   if (group !== undefined) data.group = group || null
   if (logoUrl !== undefined) data.logoUrl = logoUrl || null
+  if (logoId !== undefined) data.logoId = logoId ? Number(logoId) : null
   if (number !== undefined) data.number = Number(number)
   try {
     const c = await prisma.channel.update({ where: { id }, data })
@@ -124,7 +125,7 @@ channelsRouter.delete('/:id/rotation/:itemId', async (req, res) => {
 // --- time blocks ---
 channelsRouter.post('/:id/blocks', async (req, res) => {
   const channelId = Number(req.params.id)
-  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode } = req.body ?? {}
+  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode, logoId } = req.body ?? {}
   if (!collectionId || !days || startMinute == null || endMinute == null) {
     return res.status(400).json({ error: 'collectionId, days, startMinute, endMinute are required' })
   }
@@ -147,6 +148,7 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
       endMinute: Number(endMinute),
       playbackOrder: asOrder(playbackOrder),
       logoUrl: logoUrl || null,
+      logoId: logoId ? Number(logoId) : null,
       fillerMode: asFiller(fillerMode),
     },
   })
@@ -155,7 +157,7 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
 
 channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
   const blockId = Number(req.params.blockId)
-  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode } = req.body ?? {}
+  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode, logoId } = req.body ?? {}
   const data: {
     collectionId?: number
     days?: string
@@ -164,6 +166,7 @@ channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
     playbackOrder?: string
     logoUrl?: string | null
     fillerMode?: string
+    logoId?: number | null
   } = {}
   if (collectionId !== undefined) data.collectionId = Number(collectionId)
   if (days !== undefined) data.days = String(days)
@@ -171,6 +174,7 @@ channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
   if (endMinute !== undefined) data.endMinute = Number(endMinute)
   if (playbackOrder !== undefined) data.playbackOrder = asOrder(playbackOrder)
   if (logoUrl !== undefined) data.logoUrl = logoUrl || null
+  if (logoId !== undefined) data.logoId = logoId ? Number(logoId) : null
   if (fillerMode !== undefined) data.fillerMode = asFiller(fillerMode)
   if (data.startMinute != null && data.endMinute != null && data.endMinute === data.startMinute) {
     return res.status(400).json({ error: 'Start and end time cannot be the same.' })

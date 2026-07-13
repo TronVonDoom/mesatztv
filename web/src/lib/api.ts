@@ -187,6 +187,11 @@ export type RotationItem = {
   collection: { id: number; name: string }
 }
 
+export type Logo = { id: number; name: string; mime: string }
+export function logoImageUrl(id: number): string {
+  return `/api/logos/${id}/image`
+}
+
 export type TimeBlock = {
   id: number
   collectionId: number
@@ -195,6 +200,7 @@ export type TimeBlock = {
   endMinute: number
   playbackOrder: string
   logoUrl: string | null
+  logoId: number | null
   fillerMode: string
   collection: { id: number; name: string }
 }
@@ -205,6 +211,7 @@ export type Channel = {
   name: string
   group: string | null
   logoUrl: string | null
+  logoId: number | null
   rotationCount: number
   blockCount: number
   playoutCount: number
@@ -217,6 +224,7 @@ export type ChannelDetail = {
   name: string
   group: string | null
   logoUrl: string | null
+  logoId: number | null
   rotationItems: RotationItem[]
   timeBlocks: TimeBlock[]
 }
@@ -364,8 +372,12 @@ export const api = {
   addChannel: (data: { number: number; name: string; group?: string | null }) =>
     request<Channel>('/api/channels', { method: 'POST', body: JSON.stringify(data) }),
   channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
-  updateChannel: (id: number, data: { name?: string; group?: string | null; logoUrl?: string | null }) =>
+  updateChannel: (id: number, data: { name?: string; group?: string | null; logoUrl?: string | null; logoId?: number | null }) =>
     request<Channel>(`/api/channels/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  logos: () => request<Logo[]>('/api/logos'),
+  uploadLogo: (name: string, dataUrl: string) =>
+    request<Logo>('/api/logos', { method: 'POST', body: JSON.stringify({ name, dataUrl }) }),
+  deleteLogo: (id: number) => request<void>(`/api/logos/${id}`, { method: 'DELETE' }),
   deleteChannel: (id: number) => request<void>(`/api/channels/${id}`, { method: 'DELETE' }),
   addRotation: (
     channelId: number,
@@ -375,12 +387,12 @@ export const api = {
     request<void>(`/api/channels/${channelId}/rotation/${itemId}`, { method: 'DELETE' }),
   addBlock: (
     channelId: number,
-    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string },
+    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string; logoId?: number | null },
   ) => request<TimeBlock>(`/api/channels/${channelId}/blocks`, { method: 'POST', body: JSON.stringify(data) }),
   updateBlock: (
     channelId: number,
     blockId: number,
-    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string },
+    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string; logoId?: number | null },
   ) => request<TimeBlock>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteBlock: (channelId: number, blockId: number) =>
     request<void>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'DELETE' }),

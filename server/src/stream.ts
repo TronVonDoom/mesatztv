@@ -7,6 +7,7 @@ import type { Response } from 'express'
 import type { Channel, TimeBlock } from '@prisma/client'
 import { prisma } from './db.js'
 import { buildPlayout, prunePlayout } from './playout.js'
+import { logosDir } from './paths.js'
 
 // Normalized output format — every item is transcoded to these exact params so
 // the concatenated MPEG-TS is a single continuous, seamless stream.
@@ -165,8 +166,15 @@ function activeBlockAt(blocks: TimeBlock[], date: Date): TimeBlock | null {
   return null
 }
 
-function rawLogoFor(channel: Channel, blocks: TimeBlock[], at: Date): string | null {
+function rawLogoFor(
+  channel: Channel,
+  blocks: TimeBlock[],
+  logoPath: Map<number, string>,
+  at: Date,
+): string | null {
   const block = activeBlockAt(blocks, at)
+  const id = block?.logoId ?? channel.logoId
+  if (id != null && logoPath.has(id)) return logoPath.get(id) as string
   return block?.logoUrl || channel.logoUrl || null
 }
 
@@ -271,6 +279,8 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
   const enc = await detectEncoder()
   const wm = await loadWatermark()
   const periodFrames = Math.max(1, Math.round(wm.frequencyMinutes * 60 * FPS))
+  const logos = await prisma.logo.findMany()
+  const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
 
   res.writeHead(200, {
     'Content-Type': 'video/mp2t',
@@ -303,7 +313,7 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
     }
     for (const item of items) {
       if (aborted) break
-      const logo = await localLogo(rawLogoFor(channel, channel.timeBlocks, item.startTime))
+      const logo = await localLogo(rawLogoFor(channel, channel.timeBlocks, logoPath, item.startTime))
       const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
       first = false
       const mi = item.mediaItem

@@ -9,6 +9,7 @@ import Settings from './pages/Settings'
 import Collections from './pages/Collections'
 import Channels from './pages/Channels'
 import ChannelEditor from './pages/ChannelEditor'
+import Logos from './pages/Logos'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="channels" element={<Channels />} />
         <Route path="channels/:id" element={<ChannelEditor />} />
         <Route path="collections" element={<Collections />} />
+        <Route path="logos" element={<Logos />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

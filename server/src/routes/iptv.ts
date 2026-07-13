@@ -43,7 +43,7 @@ iptvRouter.get('/channels.m3u', async (req, res) => {
   const fallback = `${base}/mesatztv-icon.png`
   let out = '#EXTM3U\n'
   for (const c of channels) {
-    const logo = c.logoUrl || fallback
+    const logo = c.logoId ? `${base}/api/logos/${c.logoId}/image` : c.logoUrl || fallback
     out +=
       `#EXTINF:-1 tvg-id="${c.number}" tvg-chno="${c.number}" ` +
       `tvg-name="${escapeXml(c.name)}" tvg-logo="${escapeXml(logo)}" ` +
@@ -74,7 +74,7 @@ iptvRouter.get('/xmltv.xml', async (req, res) => {
   for (const c of channels) {
     xml += `  <channel id="${c.number}">\n`
     xml += `    <display-name>${escapeXml(c.name)}</display-name>\n`
-    xml += `    <icon src="${escapeXml(c.logoUrl || `${base}/mesatztv-icon.png`)}" />\n`
+    xml += `    <icon src="${escapeXml(c.logoId ? `${base}/api/logos/${c.logoId}/image` : c.logoUrl || `${base}/mesatztv-icon.png`)}" />\n`
     xml += '  </channel>\n'
   }
   for (const it of items) {

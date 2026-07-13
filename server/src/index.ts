@@ -14,13 +14,14 @@ import { metadataRouter } from './routes/metadata.js'
 import { collectionsRouter } from './routes/collections.js'
 import { channelsRouter } from './routes/channels.js'
 import { iptvRouter } from './routes/iptv.js'
+import { logosRouter } from './routes/logos.js'
 
 const app = express()
 const PORT = Number(process.env.PORT ?? 8688)
 const VERSION = process.env.APP_VERSION ?? '0.5.0'
 const startedAt = Date.now()
 
-app.use(express.json())
+app.use(express.json({ limit: '10mb' })) // logo uploads arrive as base64 data URLs
 
 // --- ffmpeg detection -------------------------------------------------------
 let ffmpegAvailable = false
@@ -85,6 +86,7 @@ app.use('/api/settings', settingsRouter)
 app.use('/api/metadata', metadataRouter)
 app.use('/api/collections', collectionsRouter)
 app.use('/api/channels', channelsRouter)
+app.use('/api/logos', logosRouter)
 app.use('/iptv', iptvRouter)
 
 // --- Static frontend (production only) --------------------------------------
