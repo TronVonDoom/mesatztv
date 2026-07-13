@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, logoImageUrl, type Logo, type WatermarkConfig } from '../lib/api'
 import WatermarkFields from '../components/WatermarkFields'
 
-export default function Logos() {
+export default function Logos({ embedded = false }: { embedded?: boolean }) {
   const [logos, setLogos] = useState<Logo[]>([])
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -49,12 +49,16 @@ export default function Logos() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Logos</h1>
-      <p className="text-slate-400 text-sm mb-6">
-        Upload logos once, then pick them as channel or block watermarks (and guide images). Each logo carries
-        its own watermark settings — click <span className="text-slate-300">Watermark</span> on a logo to tune
-        size, position, opacity, and timing.
-      </p>
+      {!embedded && (
+        <>
+          <h1 className="text-2xl font-bold mb-1">Logos</h1>
+          <p className="text-slate-400 text-sm mb-6">
+            Upload logos once, then pick them as channel or block watermarks (and guide images). Each logo
+            carries its own watermark settings — click <span className="text-slate-300">Watermark</span> on a
+            logo to tune size, position, opacity, and timing.
+          </p>
+        </>
+      )}
 
       {error && (
         <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 text-sm p-3 mb-5">

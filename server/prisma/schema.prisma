@@ -28,6 +28,18 @@ model Setting {
   value String
 }
 
+// An uploaded non-logo media asset (ambient audio, custom filler video),
+// managed on the Media page. Files live under the data dir /assets.
+model Asset {
+  id        Int      @id @default(autoincrement())
+  name      String
+  kind      String // "audio" | "filler"
+  filename  String // stored under the data dir /assets
+  mime      String
+  sizeBytes Int?
+  createdAt DateTime @default(now())
+}
+
 // An uploaded logo/watermark image, reusable across channels and blocks.
 model Logo {
   id        Int         @id @default(autoincrement())

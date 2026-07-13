@@ -198,6 +198,19 @@ export function logoImageUrl(id: number): string {
   return `/api/logos/${id}/image`
 }
 
+export type AssetKind = 'audio' | 'filler'
+export type Asset = {
+  id: number
+  name: string
+  kind: AssetKind
+  mime: string
+  sizeBytes: number | null
+  createdAt: string
+}
+export function assetFileUrl(id: number): string {
+  return `/api/assets/${id}/file`
+}
+
 export type TimeBlock = {
   id: number
   collectionId: number
@@ -435,6 +448,31 @@ export const api = {
     return request<LogsResponse>(`/api/logs${q ? `?${q}` : ''}`)
   },
   clearLogs: () => request<void>('/api/logs', { method: 'DELETE' }),
+
+  // --- media assets ---
+  assets: (kind?: AssetKind) =>
+    request<Asset[]>(`/api/assets${kind ? `?kind=${kind}` : ''}`),
+  uploadAsset: async (kind: AssetKind, name: string, file: File): Promise<Asset> => {
+    const res = await fetch(`/api/assets?kind=${kind}&name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+    if (!res.ok) {
+      let message = `Upload failed (${res.status})`
+      try {
+        const b = await res.json()
+        if (b?.error) message = b.error
+      } catch {
+        /* ignore */
+      }
+      throw new Error(message)
+    }
+    return res.json() as Promise<Asset>
+  },
+  useAsset: (id: number, as: 'music' | 'filler') =>
+    request<{ ok: boolean; path: string }>(`/api/assets/${id}/use`, { method: 'POST', body: JSON.stringify({ as }) }),
+  deleteAsset: (id: number) => request<void>(`/api/assets/${id}`, { method: 'DELETE' }),
 
   // --- admin / maintenance ---
   resetInstance: (assets: boolean) =>

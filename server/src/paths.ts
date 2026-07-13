@@ -13,3 +13,9 @@ export function logosDir(): string {
   fs.mkdirSync(d, { recursive: true })
   return d
 }
+
+export function assetsDir(): string {
+  const d = path.join(dataDir(), 'assets')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}
