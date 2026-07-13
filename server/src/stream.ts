@@ -130,6 +130,34 @@ async function localLogo(raw: string | null): Promise<string | undefined> {
   return result
 }
 
+/** Generate a loopable ambient station-ID clip (gradient background + soft tone). */
+export function generateFiller(out: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-y',
+      '-f', 'lavfi', '-i', 'gradients=s=1280x720:d=20:speed=0.015:c0=0x111827:c1=0x4c1d95:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4',
+      '-f', 'lavfi', '-i', 'sine=f=98:d=20,volume=0.06',
+      '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
+    ]
+    const p = spawn('ffmpeg', args)
+    p.stderr?.on('data', () => {})
+    p.on('error', reject)
+    p.on('close', (c) => (c === 0 ? resolve() : reject(new Error('filler generation failed'))))
+  })
+}
+
+// Resolve the filler clip: user-provided (setting) else an auto-generated default.
+let fillerClipCache: string | undefined
+async function getFillerClip(): Promise<string | undefined> {
+  const s = await prisma.setting.findUnique({ where: { key: 'filler_path' } })
+  if (s?.value && fs.existsSync(s.value)) return s.value
+  const out = path.join(os.tmpdir(), 'mesatztv-filler.mp4')
+  if (fs.existsSync(out)) return (fillerClipCache = out)
+  await generateFiller(out).catch(() => {})
+  return fs.existsSync(out) ? (fillerClipCache = out) : undefined
+}
+
 /** Pipe a child's stdout to the response with backpressure; resolve on exit. */
 function pipeSegment(proc: ChildProcess, res: Response): Promise<void> {
   return new Promise((resolve) => {
@@ -203,19 +231,23 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
     }
     for (const item of items) {
       if (aborted) break
-      const mi = item.mediaItem
-      if (!mi || !fs.existsSync(mi.path)) {
-        cursor = item.stopTime
-        continue
-      }
+      const logo = await localLogo(rawLogoFor(channel, channel.timeBlocks, item.startTime))
       const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
       first = false
-      const seg: Segment = {
-        filePath: mi.path,
-        offsetSec: offset,
-        loop: false,
-        hasAudio: !!mi.audioCodec,
-        logo: await localLogo(rawLogoFor(channel, channel.timeBlocks, item.startTime)),
+      const mi = item.mediaItem
+      let seg: Segment | null = null
+
+      if (item.kind === 'filler' || !mi) {
+        const fp = await getFillerClip()
+        const dur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
+        if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo }
+      } else if (fs.existsSync(mi.path)) {
+        seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo }
+      }
+
+      if (!seg) {
+        cursor = item.stopTime
+        continue
       }
       current = spawn('ffmpeg', ffmpegArgs(seg, enc))
       current.stderr?.on('data', () => {}) // drain stderr

@@ -26,7 +26,7 @@ function fmtDur(sec: number | null): string {
   const m = Math.round(sec / 60)
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`
 }
-function label(m: Playout['items'][number]['mediaItem']): string {
+function label(m: NonNullable<Playout['items'][number]['mediaItem']>): string {
   if (m.type === 'episode' && m.showTitle) {
     const se = m.season != null && m.episode != null
       ? ` S${String(m.season).padStart(2, '0')}E${String(m.episode).padStart(2, '0')}`
@@ -49,13 +49,14 @@ export default function ChannelEditor() {
 
   const [chForm, setChForm] = useState({ name: '', group: '', logoUrl: '' })
   const [rot, setRot] = useState({ collectionId: '', mode: 'one', count: '1', playbackOrder: 'chronological' })
-  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string }>({
+  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; fillerMode: string }>({
     collectionId: '',
     days: [1, 2, 3, 4, 5],
     start: '18:00',
     end: '21:00',
     playbackOrder: 'chronological',
     logoUrl: '',
+    fillerMode: 'none',
   })
   const [editingBlock, setEditingBlock] = useState<number | null>(null)
 
@@ -112,7 +113,7 @@ export default function ChannelEditor() {
 
   function resetBlockForm() {
     setEditingBlock(null)
-    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '' })
+    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', fillerMode: 'none' })
   }
 
   function editBlock(b: ChannelDetail['timeBlocks'][number]) {
@@ -124,6 +125,7 @@ export default function ChannelEditor() {
       end: minToTimeStr(b.endMinute),
       playbackOrder: b.playbackOrder,
       logoUrl: b.logoUrl ?? '',
+      fillerMode: b.fillerMode ?? 'none',
     })
   }
 
@@ -140,6 +142,7 @@ export default function ChannelEditor() {
       endMinute: timeToMin(blk.end),
       playbackOrder: blk.playbackOrder,
       logoUrl: blk.logoUrl || null,
+      fillerMode: blk.fillerMode,
     }
     await guard(() =>
       editingBlock ? api.updateBlock(channelId, editingBlock, payload) : api.addBlock(channelId, payload),
@@ -274,6 +277,7 @@ export default function ChannelEditor() {
                   <div className="text-xs text-slate-500">
                     {formatDays(b.days)} · {minutesToTime(b.startMinute)}–{minutesToTime(b.endMinute)} · {b.playbackOrder}
                     {b.logoUrl && ' · 🖼 logo'}
+                    {b.fillerMode && b.fillerMode !== 'none' && ` · filler: ${b.fillerMode}`}
                   </div>
                 </div>
                 <button onClick={() => editBlock(b)} className="text-xs text-slate-500 hover:text-indigo-300" aria-label="Edit">Edit</button>
@@ -316,6 +320,11 @@ export default function ChannelEditor() {
                 <option value="rotate">rotate shows</option>
                 <option value="shuffle">shuffle</option>
               </select>
+              <select className={input} value={blk.fillerMode} onChange={(e) => setBlk({ ...blk, fillerMode: e.target.value })} title="Fill the leftover time so the block ends on schedule">
+                <option value="none">no filler</option>
+                <option value="between">filler between</option>
+                <option value="end">filler at end</option>
+              </select>
               <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-3 py-2 text-sm font-medium">{editingBlock ? 'Save' : 'Add'}</button>
               {editingBlock && (
                 <button type="button" onClick={resetBlockForm} className="rounded-lg border border-slate-700 hover:border-slate-500 px-3 py-2 text-sm">Cancel</button>
@@ -354,8 +363,12 @@ export default function ChannelEditor() {
                 <div key={it.id} className={'flex items-center gap-3 py-2 text-sm ' + (isNow ? 'text-indigo-200' : '')}>
                   <span className="font-mono text-xs text-slate-500 w-16 shrink-0">{fmtClock(it.startTime)}</span>
                   {isNow && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 rounded px-1.5 py-0.5 shrink-0">NOW</span>}
-                  <span className="flex-1 min-w-0 truncate">{label(it.mediaItem)}</span>
-                  <span className="text-xs text-slate-600 shrink-0">{fmtDur(it.mediaItem.durationSec)}</span>
+                  <span className={'flex-1 min-w-0 truncate ' + (!it.mediaItem ? 'text-slate-500 italic' : '')}>
+                    {it.mediaItem ? label(it.mediaItem) : it.title || 'Station ID'}
+                  </span>
+                  <span className="text-xs text-slate-600 shrink-0">
+                    {fmtDur(it.mediaItem?.durationSec ?? (new Date(it.stopTime).getTime() - new Date(it.startTime).getTime()) / 1000)}
+                  </span>
                   {i === 0 && !isNow && <span className="text-[10px] text-slate-600 shrink-0">next</span>}
                 </div>
               )

@@ -101,7 +101,7 @@ export type ShowDetail = {
   seasons: SeasonGroup[]
 }
 
-export type SettingsInfo = { tmdbConfigured: boolean }
+export type SettingsInfo = { tmdbConfigured: boolean; fillerPath: string | null }
 
 export type MetadataStatus = {
   running: boolean
@@ -183,6 +183,7 @@ export type TimeBlock = {
   endMinute: number
   playbackOrder: string
   logoUrl: string | null
+  fillerMode: string
   collection: { id: number; name: string }
 }
 
@@ -212,6 +213,8 @@ export type PlayoutEntry = {
   id: number
   startTime: string
   stopTime: string
+  kind: string
+  title: string | null
   mediaItem: {
     id: number
     title: string
@@ -222,7 +225,7 @@ export type PlayoutEntry = {
     durationSec: number | null
     posterPath: string | null
     tmdbPosterPath: string | null
-  }
+  } | null
 }
 
 export type Playout = { now: string; items: PlayoutEntry[] }
@@ -299,6 +302,9 @@ export const api = {
       method: 'POST',
     }),
   metadataStatus: () => request<MetadataStatus>('/api/metadata/status'),
+  generateFiller: () => request<{ ok: boolean; path: string }>('/api/settings/filler/generate', { method: 'POST' }),
+  setFillerPath: (path: string) =>
+    request<{ ok: boolean; path: string | null }>('/api/settings/filler', { method: 'POST', body: JSON.stringify({ path }) }),
 
   // --- collections ---
   collections: () => request<Collection[]>('/api/collections'),
@@ -355,12 +361,12 @@ export const api = {
     request<void>(`/api/channels/${channelId}/rotation/${itemId}`, { method: 'DELETE' }),
   addBlock: (
     channelId: number,
-    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null },
+    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string },
   ) => request<TimeBlock>(`/api/channels/${channelId}/blocks`, { method: 'POST', body: JSON.stringify(data) }),
   updateBlock: (
     channelId: number,
     blockId: number,
-    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null },
+    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string },
   ) => request<TimeBlock>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteBlock: (channelId: number, blockId: number) =>
     request<void>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'DELETE' }),

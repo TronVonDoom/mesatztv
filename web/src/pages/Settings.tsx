@@ -6,10 +6,49 @@ export default function Settings() {
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  const [fillerPath, setFillerPath] = useState<string | null>(null)
+  const [provide, setProvide] = useState('')
+  const [fillerBusy, setFillerBusy] = useState(false)
+  const [fillerMsg, setFillerMsg] = useState<string | null>(null)
 
   useEffect(() => {
-    api.settings().then((s) => setConfigured(s.tmdbConfigured)).catch(() => {})
+    api
+      .settings()
+      .then((s) => {
+        setConfigured(s.tmdbConfigured)
+        setFillerPath(s.fillerPath)
+      })
+      .catch(() => {})
   }, [])
+
+  async function genFiller() {
+    setFillerBusy(true)
+    setFillerMsg(null)
+    try {
+      const r = await api.generateFiller()
+      setFillerPath(r.path)
+      setFillerMsg('Ambient filler generated. ✅')
+    } catch (e) {
+      setFillerMsg(e instanceof Error ? e.message : 'Failed to generate filler')
+    } finally {
+      setFillerBusy(false)
+    }
+  }
+  async function saveProvide(e: React.FormEvent) {
+    e.preventDefault()
+    setFillerBusy(true)
+    setFillerMsg(null)
+    try {
+      const r = await api.setFillerPath(provide.trim())
+      setFillerPath(r.path)
+      setProvide('')
+      setFillerMsg('Filler updated. ✅')
+    } catch (e) {
+      setFillerMsg(e instanceof Error ? e.message : 'Failed to set filler')
+    } finally {
+      setFillerBusy(false)
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault()
@@ -89,6 +128,40 @@ export default function Settings() {
             className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 px-4 py-2 text-sm font-medium shrink-0"
           >
             {saving ? 'Verifying…' : 'Save & verify'}
+          </button>
+        </form>
+      </div>
+
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
+        <h2 className="font-semibold mb-1">Filler (station ID)</h2>
+        <p className="text-slate-400 text-sm mb-3">
+          Fills gaps in time blocks. The channel/block logo is overlaid live, so a plain ambient
+          clip works for every channel.
+        </p>
+        <div className="text-xs mb-3">
+          Current:{' '}
+          {fillerPath ? (
+            <code className="text-emerald-300 break-all">{fillerPath}</code>
+          ) : (
+            <span className="text-slate-500">auto-generated default</span>
+          )}
+        </div>
+        {fillerMsg && <div className="text-sm text-emerald-300 mb-3">{fillerMsg}</div>}
+        <div className="flex flex-wrap gap-2 items-center mb-3">
+          <button onClick={genFiller} disabled={fillerBusy} className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 px-4 py-2 text-sm font-medium">
+            {fillerBusy ? 'Working…' : 'Generate ambient filler'}
+          </button>
+          <span className="text-xs text-slate-500">or point at your own clip:</span>
+        </div>
+        <form onSubmit={saveProvide} className="flex gap-2">
+          <input
+            className="flex-1 min-w-0 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm font-mono focus:border-indigo-500 outline-none"
+            placeholder="/media/bumpers/station-id.mp4 (blank = default)"
+            value={provide}
+            onChange={(e) => setProvide(e.target.value)}
+          />
+          <button type="submit" disabled={fillerBusy} className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-4 py-2 text-sm shrink-0">
+            Use file
           </button>
         </form>
       </div>

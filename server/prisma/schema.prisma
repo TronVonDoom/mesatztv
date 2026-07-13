@@ -134,17 +134,20 @@ model TimeBlock {
   collectionId  Int
   playbackOrder String     @default("chronological")
   logoUrl       String? // on-screen watermark while this block airs (else channel logo)
+  fillerMode    String     @default("none") // "none" | "between" | "end"
 
   @@index([channelId])
 }
 
 // A single scheduled program on a channel's timeline.
 model PlayoutItem {
-  id          Int       @id @default(autoincrement())
-  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  id          Int        @id @default(autoincrement())
+  channel     Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
   channelId   Int
-  mediaItem   MediaItem @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
-  mediaItemId Int
+  mediaItem   MediaItem? @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
+  mediaItemId Int? // null for filler
+  kind        String     @default("program") // "program" | "filler"
+  title       String? // label for filler / EPG
   startTime   DateTime
   stopTime    DateTime
 

@@ -81,13 +81,13 @@ iptvRouter.get('/xmltv.xml', async (req, res) => {
     const chno = numById.get(it.channelId)
     if (chno == null) continue
     const m = it.mediaItem
-    const isEp = m.type === 'episode' && m.showTitle
-    const title = isEp ? (m.showTitle as string) : m.title
+    const isEp = !!m && m.type === 'episode' && !!m.showTitle
+    const title = !m ? (it.title || 'Station ID') : isEp ? (m.showTitle as string) : m.title
     xml += `  <programme start="${xmltvTime(it.startTime)}" stop="${xmltvTime(it.stopTime)}" channel="${chno}">\n`
     xml += `    <title>${escapeXml(title)}</title>\n`
-    if (isEp && m.title) xml += `    <sub-title>${escapeXml(m.title)}</sub-title>\n`
-    if (m.overview) xml += `    <desc>${escapeXml(m.overview)}</desc>\n`
-    if (m.type === 'episode' && m.season != null && m.episode != null) {
+    if (isEp && m && m.title) xml += `    <sub-title>${escapeXml(m.title)}</sub-title>\n`
+    if (m && m.overview) xml += `    <desc>${escapeXml(m.overview)}</desc>\n`
+    if (m && m.type === 'episode' && m.season != null && m.episode != null) {
       xml += `    <episode-num system="onscreen">S${String(m.season).padStart(2, '0')}E${String(m.episode).padStart(2, '0')}</episode-num>\n`
       xml += `    <episode-num system="xmltv_ns">${m.season - 1}.${m.episode - 1}.0</episode-num>\n`
     }

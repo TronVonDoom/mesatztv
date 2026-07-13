@@ -205,4 +205,5 @@ stream (M5).
       (`/iptv/xmltv.xml`) for Plex/Jellyfin/Threadfin
 - [x] **M5 — Streaming pipeline:** live MPEG-TS at `/iptv/channel/N.ts` — normalized
       transcode, per-block logo overlay, NVIDIA nvenc, real-time pacing
-- [ ] **M6 — Bumpers, filler & overlays:** interstitials + scheduled watermarks
+- [x] **M6 — Filler & overlays:** per-block on-screen logo watermarks + station-ID
+      filler (auto-generated ambient clip or your own) with between/end distribution

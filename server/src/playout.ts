@@ -93,7 +93,17 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
     return cache.get(key)!
   }
 
-  const created: { mediaItemId: number; startTime: Date; stopTime: Date }[] = []
+  const created: {
+    mediaItemId: number | null
+    kind: string
+    title: string | null
+    startTime: Date
+    stopTime: Date
+  }[] = []
+  const pushProgram = (id: number, start: Date, stop: Date) =>
+    created.push({ mediaItemId: id, kind: 'program', title: null, startTime: start, stopTime: stop })
+  const pushFiller = (start: Date, stop: Date) =>
+    created.push({ mediaItemId: null, kind: 'filler', title: 'Filler', startTime: start, stopTime: stop })
   let iterations = 0
   let stall = 0
   const stallLimit = channel.rotationItems.length + channel.timeBlocks.length + 3
@@ -106,17 +116,67 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
     if (block) {
       const key = 'b' + block.id
       const items = await listFor(key, block.collection, block.playbackOrder)
+      const blockEnd = skipToBlockEnd(cursor, block)
+      const fillerMode = block.fillerMode || 'none'
+
       if (items.length === 0) {
-        cursor = skipToBlockEnd(cursor, block)
-      } else {
+        // No programs: fill the whole window with filler (if enabled), else skip.
+        if (fillerMode !== 'none' && blockEnd > cursor) pushFiller(new Date(cursor), new Date(blockEnd))
+        cursor = blockEnd
+      } else if (fillerMode === 'none') {
+        // Soft boundary: one program per iteration; may overrun the block end.
         const pos = state.positions[key] ?? 0
         const mi = items[pos % items.length]
         state.positions[key] = pos + 1
         const dur = mi.durationSec ?? 0
         if (dur > 0) {
           const stop = new Date(cursor.getTime() + dur * 1000)
-          created.push({ mediaItemId: mi.id, startTime: new Date(cursor), stopTime: stop })
+          pushProgram(mi.id, new Date(cursor), stop)
           cursor = stop
+        }
+      } else {
+        // Pack as many programs as fit, then filler to land exactly on blockEnd.
+        const availSec = (blockEnd.getTime() - cursor.getTime()) / 1000
+        let pos = state.positions[key] ?? 0
+        const fit: { id: number; dur: number }[] = []
+        let used = 0
+        for (let g = 0; g < 20000; g++) {
+          const mi = items[pos % items.length]
+          const dur = mi.durationSec ?? 0
+          if (dur <= 0) {
+            pos++
+            continue
+          }
+          if (used + dur > availSec) break
+          fit.push({ id: mi.id, dur })
+          used += dur
+          pos++
+        }
+        state.positions[key] = pos
+
+        if (fit.length === 0) {
+          // A single program is longer than the whole block — play it (overruns).
+          const mi = items[pos % items.length]
+          state.positions[key] = pos + 1
+          const stop = new Date(cursor.getTime() + Math.max(mi.durationSec ?? 0, 1) * 1000)
+          pushProgram(mi.id, new Date(cursor), stop)
+          cursor = stop
+        } else {
+          const gapSec = Math.max(0, availSec - used)
+          let c = cursor.getTime()
+          const perGap = fillerMode === 'between' ? gapSec / fit.length : 0
+          for (const p of fit) {
+            const stop = c + p.dur * 1000
+            pushProgram(p.id, new Date(c), new Date(stop))
+            c = stop
+            if (perGap > 0.5) {
+              const fEnd = c + perGap * 1000
+              pushFiller(new Date(c), new Date(fEnd))
+              c = fEnd
+            }
+          }
+          if (fillerMode === 'end' && gapSec > 0.5) pushFiller(new Date(c), new Date(blockEnd))
+          cursor = blockEnd
         }
       }
     } else if (channel.rotationItems.length > 0) {
@@ -133,7 +193,7 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
           const dur = mi.durationSec ?? 0
           if (dur <= 0) continue
           const stop = new Date(cursor.getTime() + dur * 1000)
-          created.push({ mediaItemId: mi.id, startTime: new Date(cursor), stopTime: stop })
+          pushProgram(mi.id, new Date(cursor), stop)
           cursor = stop
           if (cursor >= until) break
           if (activeBlock(channel.timeBlocks, cursor)) break // enter the block promptly

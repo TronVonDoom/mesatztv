@@ -6,6 +6,8 @@ export const channelsRouter = Router()
 
 const ORDERS = ['chronological', 'shuffle', 'rotate']
 const asOrder = (v: unknown) => (ORDERS.includes(String(v)) ? String(v) : 'chronological')
+const FILLERS = ['none', 'between', 'end']
+const asFiller = (v: unknown) => (FILLERS.includes(String(v)) ? String(v) : 'none')
 
 // Expand a block into intervals on a weekly minute timeline [0, 10080),
 // splitting any that cross the week boundary. Handles midnight wrap.
@@ -122,7 +124,7 @@ channelsRouter.delete('/:id/rotation/:itemId', async (req, res) => {
 // --- time blocks ---
 channelsRouter.post('/:id/blocks', async (req, res) => {
   const channelId = Number(req.params.id)
-  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl } = req.body ?? {}
+  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode } = req.body ?? {}
   if (!collectionId || !days || startMinute == null || endMinute == null) {
     return res.status(400).json({ error: 'collectionId, days, startMinute, endMinute are required' })
   }
@@ -145,6 +147,7 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
       endMinute: Number(endMinute),
       playbackOrder: asOrder(playbackOrder),
       logoUrl: logoUrl || null,
+      fillerMode: asFiller(fillerMode),
     },
   })
   res.status(201).json(b)
@@ -152,7 +155,7 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
 
 channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
   const blockId = Number(req.params.blockId)
-  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl } = req.body ?? {}
+  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode } = req.body ?? {}
   const data: {
     collectionId?: number
     days?: string
@@ -160,6 +163,7 @@ channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
     endMinute?: number
     playbackOrder?: string
     logoUrl?: string | null
+    fillerMode?: string
   } = {}
   if (collectionId !== undefined) data.collectionId = Number(collectionId)
   if (days !== undefined) data.days = String(days)
@@ -167,6 +171,7 @@ channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
   if (endMinute !== undefined) data.endMinute = Number(endMinute)
   if (playbackOrder !== undefined) data.playbackOrder = asOrder(playbackOrder)
   if (logoUrl !== undefined) data.logoUrl = logoUrl || null
+  if (fillerMode !== undefined) data.fillerMode = asFiller(fillerMode)
   if (data.startMinute != null && data.endMinute != null && data.endMinute === data.startMinute) {
     return res.status(400).json({ error: 'Start and end time cannot be the same.' })
   }
