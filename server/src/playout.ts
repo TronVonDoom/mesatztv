@@ -165,14 +165,19 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
   return created.length
 }
 
-/** Clear a channel's timeline and reset its build state, anchored to now. */
-export async function resetPlayout(channelId: number): Promise<void> {
+/**
+ * Clear a channel's future timeline and re-anchor it to now. By default this
+ * KEEPS each rotation/block's saved position, so shows continue where they
+ * left off instead of restarting at episode 1 — pass hard=true to also wipe
+ * positions and start every item over from the beginning.
+ */
+export async function resetPlayout(channelId: number, hard = false): Promise<void> {
   const anchor = truncateToMinute(new Date())
   await prisma.$transaction([
     prisma.playoutItem.deleteMany({ where: { channelId } }),
     prisma.channel.update({
       where: { id: channelId },
-      data: { playoutAnchor: anchor, playoutCursor: anchor, playoutState: null },
+      data: { playoutAnchor: anchor, playoutCursor: anchor, ...(hard ? { playoutState: null } : {}) },
     }),
   ])
 }

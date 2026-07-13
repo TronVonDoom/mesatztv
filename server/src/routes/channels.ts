@@ -208,7 +208,8 @@ channelsRouter.post('/:id/build', async (req, res) => {
 })
 
 channelsRouter.post('/:id/reset', async (req, res) => {
-  await resetPlayout(Number(req.params.id))
+  const hard = req.query.hard === '1' || req.query.hard === 'true'
+  await resetPlayout(Number(req.params.id), hard)
   res.json({ ok: true })
 })
 

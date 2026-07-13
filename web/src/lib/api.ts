@@ -366,8 +366,8 @@ export const api = {
     request<void>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'DELETE' }),
   buildPlayout: (channelId: number, hours = 48) =>
     request<{ built: number }>(`/api/channels/${channelId}/build?hours=${hours}`, { method: 'POST' }),
-  resetPlayout: (channelId: number) =>
-    request<{ ok: boolean }>(`/api/channels/${channelId}/reset`, { method: 'POST' }),
+  resetPlayout: (channelId: number, hard = false) =>
+    request<{ ok: boolean }>(`/api/channels/${channelId}/reset${hard ? '?hard=1' : ''}`, { method: 'POST' }),
   playout: (channelId: number, hours = 24) =>
     request<Playout>(`/api/channels/${channelId}/playout?hours=${hours}`),
 }

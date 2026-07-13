@@ -161,11 +161,12 @@ export default function ChannelEditor() {
     }
   }
 
-  async function reset() {
+  async function reset(hard = false) {
+    if (hard && !confirm('Restart every show/rotation from the beginning? This loses all saved playback positions on this channel.')) return
     setError(null)
     setBuilding(true)
     try {
-      await api.resetPlayout(channelId)
+      await api.resetPlayout(channelId, hard)
       await api.buildPlayout(channelId, 48)
       await load()
       await loadPlayout()
@@ -332,8 +333,11 @@ export default function ChannelEditor() {
             <button onClick={build} disabled={building || (ch.rotationItems.length === 0 && ch.timeBlocks.length === 0)} className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 px-4 py-2 text-sm font-medium">
               {building ? 'Building…' : 'Build 48h'}
             </button>
-            <button onClick={reset} disabled={building || (ch.rotationItems.length === 0 && ch.timeBlocks.length === 0)} className="rounded-lg border border-slate-700 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40 px-4 py-2 text-sm">
-              Reset & rebuild
+            <button onClick={() => reset(false)} disabled={building || (ch.rotationItems.length === 0 && ch.timeBlocks.length === 0)} title="Clears the schedule and rebuilds — shows continue where they left off" className="rounded-lg border border-slate-700 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40 px-4 py-2 text-sm">
+              Rebuild
+            </button>
+            <button onClick={() => reset(true)} disabled={building || (ch.rotationItems.length === 0 && ch.timeBlocks.length === 0)} title="Restart every show from episode 1" className="rounded-lg border border-slate-800 text-slate-500 hover:border-rose-500/50 hover:text-rose-300 disabled:opacity-40 px-4 py-2 text-sm">
+              Restart from S1E1
             </button>
           </div>
         </div>
