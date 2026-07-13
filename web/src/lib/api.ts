@@ -111,6 +111,7 @@ export type WatermarkConfig = {
   frequencyMinutes: number
   durationSeconds: number
   fadeSeconds: number
+  constrainToMedia: boolean
 }
 
 export type SettingsInfo = { tmdbConfigured: boolean; fillerPath: string | null; watermark: WatermarkConfig }
@@ -187,7 +188,7 @@ export type RotationItem = {
   collection: { id: number; name: string }
 }
 
-export type Logo = { id: number; name: string; mime: string }
+export type Logo = { id: number; name: string; mime: string; watermark: WatermarkConfig }
 export function logoImageUrl(id: number): string {
   return `/api/logos/${id}/image`
 }
@@ -250,7 +251,7 @@ export type PlayoutEntry = {
 
 export type Playout = { now: string; items: PlayoutEntry[] }
 
-export type LogLevel = 'info' | 'warn' | 'error'
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type LogCategory = 'stream' | 'ffmpeg' | 'playout' | 'system'
 export type LogEntry = {
   id: number
@@ -389,6 +390,8 @@ export const api = {
   logos: () => request<Logo[]>('/api/logos'),
   uploadLogo: (name: string, dataUrl: string) =>
     request<Logo>('/api/logos', { method: 'POST', body: JSON.stringify({ name, dataUrl }) }),
+  updateLogo: (id: number, data: { name?: string; watermark?: WatermarkConfig }) =>
+    request<Logo>(`/api/logos/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteLogo: (id: number) => request<void>(`/api/logos/${id}`, { method: 'DELETE' }),
   deleteChannel: (id: number) => request<void>(`/api/channels/${id}`, { method: 'DELETE' }),
   addRotation: (

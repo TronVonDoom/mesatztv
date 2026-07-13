@@ -2,7 +2,7 @@ import { Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getTmdbKey, setTmdbKey, validateKey } from '../tmdb.js'
-import { generateFiller, loadWatermark, DEFAULT_WATERMARK } from '../stream.js'
+import { generateFiller, loadWatermark, sanitizeWatermark } from '../stream.js'
 import { prisma } from '../db.js'
 
 export const settingsRouter = Router()
@@ -29,14 +29,7 @@ settingsRouter.get('/', async (_req, res) => {
 })
 
 settingsRouter.post('/watermark', async (req, res) => {
-  const wm = { ...DEFAULT_WATERMARK, ...(req.body ?? {}) }
-  wm.widthPercent = Math.max(1, Math.min(50, Number(wm.widthPercent) || 10))
-  wm.opacityPercent = Math.max(0, Math.min(100, Number(wm.opacityPercent) || 85))
-  wm.horizontalMarginPercent = Math.max(0, Math.min(45, Number(wm.horizontalMarginPercent) || 4))
-  wm.verticalMarginPercent = Math.max(0, Math.min(45, Number(wm.verticalMarginPercent) || 4))
-  wm.frequencyMinutes = Math.max(1, Number(wm.frequencyMinutes) || 5)
-  wm.durationSeconds = Math.max(1, Number(wm.durationSeconds) || 30)
-  wm.fadeSeconds = Math.max(0, Number(wm.fadeSeconds) || 1)
+  const wm = sanitizeWatermark(req.body)
   await setSetting('watermark', JSON.stringify(wm))
   res.json({ ok: true, watermark: wm })
 })

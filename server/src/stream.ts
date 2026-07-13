@@ -26,6 +26,10 @@ export type WatermarkConfig = {
   frequencyMinutes: number
   durationSeconds: number
   fadeSeconds: number
+  // When true, size/position the logo relative to the actual media rectangle
+  // (respecting the source aspect, e.g. 4:3 pillarboxed content) instead of the
+  // full 1280x720 output canvas — so the watermark stays over the picture.
+  constrainToMedia: boolean
 }
 
 export const DEFAULT_WATERMARK: WatermarkConfig = {
@@ -38,16 +42,41 @@ export const DEFAULT_WATERMARK: WatermarkConfig = {
   frequencyMinutes: 5,
   durationSeconds: 30,
   fadeSeconds: 1,
+  constrainToMedia: false,
+}
+
+/** Parse a stored WatermarkConfig JSON blob, filling gaps from `base`. */
+export function parseWatermark(json: string | null | undefined, base: WatermarkConfig = DEFAULT_WATERMARK): WatermarkConfig {
+  if (!json) return base
+  try {
+    return { ...base, ...(JSON.parse(json) as Partial<WatermarkConfig>) }
+  } catch {
+    return base
+  }
+}
+
+/** Clamp an incoming (untrusted) watermark config to valid ranges/enums. */
+export function sanitizeWatermark(input: unknown): WatermarkConfig {
+  const wm = { ...DEFAULT_WATERMARK, ...((input as Partial<WatermarkConfig>) ?? {}) }
+  const modes: WatermarkConfig['mode'][] = ['permanent', 'intermittent', 'none']
+  const positions: WatermarkConfig['position'][] = ['top-left', 'top-right', 'bottom-left', 'bottom-right']
+  return {
+    mode: modes.includes(wm.mode) ? wm.mode : 'permanent',
+    position: positions.includes(wm.position) ? wm.position : 'bottom-right',
+    widthPercent: Math.max(1, Math.min(50, Number(wm.widthPercent) || 10)),
+    horizontalMarginPercent: Math.max(0, Math.min(45, Number(wm.horizontalMarginPercent) || 0)),
+    verticalMarginPercent: Math.max(0, Math.min(45, Number(wm.verticalMarginPercent) || 0)),
+    opacityPercent: Math.max(0, Math.min(100, Number(wm.opacityPercent) || 85)),
+    frequencyMinutes: Math.max(1, Number(wm.frequencyMinutes) || 5),
+    durationSeconds: Math.max(1, Number(wm.durationSeconds) || 30),
+    fadeSeconds: Math.max(0, Number(wm.fadeSeconds) || 0),
+    constrainToMedia: !!wm.constrainToMedia,
+  }
 }
 
 export async function loadWatermark(): Promise<WatermarkConfig> {
   const s = await prisma.setting.findUnique({ where: { key: 'watermark' } })
-  if (!s?.value) return DEFAULT_WATERMARK
-  try {
-    return { ...DEFAULT_WATERMARK, ...(JSON.parse(s.value) as Partial<WatermarkConfig>) }
-  } catch {
-    return DEFAULT_WATERMARK
-  }
+  return parseWatermark(s?.value)
 }
 
 let encoderCache: string | null = null
@@ -86,18 +115,44 @@ type Segment = {
   hasAudio: boolean
   logo?: string // logo file path or http url
   phaseFrames: number // intermittent watermark phase (for cross-segment continuity)
+  mediaWidth: number // source pixel dims (for constrain-to-media watermark)
+  mediaHeight: number
+}
+
+// The rectangle the picture occupies inside the WxH output canvas after
+// aspect-preserving fit (pillar/letterbox). Used to constrain the watermark to
+// the media. When not constraining, this is the whole canvas.
+type Rect = { x0: number; y0: number; mw: number; mh: number }
+function mediaRect(mediaW: number, mediaH: number, constrain: boolean): Rect {
+  if (!constrain || !mediaW || !mediaH) return { x0: 0, y0: 0, mw: W, mh: H }
+  const ar = mediaW / mediaH
+  const canvasAR = W / H
+  let mw: number
+  let mh: number
+  if (ar >= canvasAR) {
+    mw = W
+    mh = Math.round(W / ar)
+  } else {
+    mh = H
+    mw = Math.round(H * ar)
+  }
+  return { x0: Math.round((W - mw) / 2), y0: Math.round((H - mh) / 2), mw, mh }
 }
 
 // Build the logo scale + opacity chain and overlay position for a watermark.
-function watermarkGraph(wm: WatermarkConfig, logoIdx: number, phaseFrames: number): { logoChain: string; overlayPos: string } {
-  const LW = Math.max(2, Math.round((W * wm.widthPercent) / 100))
-  const MX = Math.round((W * wm.horizontalMarginPercent) / 100)
-  const MY = Math.round((H * wm.verticalMarginPercent) / 100)
+function watermarkGraph(wm: WatermarkConfig, logoIdx: number, phaseFrames: number, rect: Rect): { logoChain: string; overlayPos: string } {
+  const LW = Math.max(2, Math.round((rect.mw * wm.widthPercent) / 100))
+  const MX = Math.round((rect.mw * wm.horizontalMarginPercent) / 100)
+  const MY = Math.round((rect.mh * wm.verticalMarginPercent) / 100)
+  const left = rect.x0 + MX
+  const top = rect.y0 + MY
+  const right = rect.x0 + rect.mw - MX // right edge of the logo box
+  const bottom = rect.y0 + rect.mh - MY // bottom edge of the logo box
   const positions: Record<string, string> = {
-    'top-left': `${MX}:${MY}`,
-    'top-right': `W-w-${MX}:${MY}`,
-    'bottom-left': `${MX}:H-h-${MY}`,
-    'bottom-right': `W-w-${MX}:H-h-${MY}`,
+    'top-left': `${left}:${top}`,
+    'top-right': `${right}-w:${top}`,
+    'bottom-left': `${left}:${bottom}-h`,
+    'bottom-right': `${right}-w:${bottom}-h`,
   }
   const overlayPos = positions[wm.position] ?? positions['bottom-right']
   const BO = Math.max(0, Math.min(1, wm.opacityPercent / 100)).toFixed(3)
@@ -142,7 +197,8 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
   const base = `[0:v]scale=iw*sar:ih,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,setpts=PTS-STARTPTS`
   let vf: string
   if (useWatermark) {
-    const wg = watermarkGraph(wm, logoIdx, seg.phaseFrames)
+    const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, wm.constrainToMedia)
+    const wg = watermarkGraph(wm, logoIdx, seg.phaseFrames, rect)
     vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}[v]`
   } else {
     vf = `${base}[v]`
@@ -174,16 +230,19 @@ function activeBlockAt(blocks: TimeBlock[], date: Date): TimeBlock | null {
   return null
 }
 
-function rawLogoFor(
+// The logo active at a given time (block override, else channel default).
+// Returns the Logo row id (so we can use its per-logo watermark settings) and
+// the raw file path / URL to overlay.
+function activeLogo(
   channel: Channel,
   blocks: TimeBlock[],
   logoPath: Map<number, string>,
   at: Date,
-): string | null {
+): { id: number | null; raw: string | null } {
   const block = activeBlockAt(blocks, at)
   const id = block?.logoId ?? channel.logoId
-  if (id != null && logoPath.has(id)) return logoPath.get(id) as string
-  return block?.logoUrl || channel.logoUrl || null
+  if (id != null && logoPath.has(id)) return { id, raw: logoPath.get(id) as string }
+  return { id: null, raw: block?.logoUrl || channel.logoUrl || null }
 }
 
 // Resolve a logo (local path or http url) to a usable local file, downloading
@@ -315,9 +374,11 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
     await prunePlayout(channel.id).catch((e) =>
       log('warn', 'playout', `Prune failed for channel ${channelNumber}`, String(e)),
     )
-    await buildPlayout(channel.id, new Date(now + 4 * 3600 * 1000)).catch((e) =>
-      log('error', 'playout', `Playout build failed for channel ${channelNumber}`, String(e?.stack || e)),
-    )
+    const built = await buildPlayout(channel.id, new Date(now + 4 * 3600 * 1000)).catch((e) => {
+      log('error', 'playout', `Playout build failed for channel ${channelNumber}`, String(e?.stack || e))
+      return -1
+    })
+    if (built >= 0) log('debug', 'playout', `Channel ${channelNumber}: built ${built} playout item(s) on connect`)
   }
 
   const nViewers = (viewers.get(channelNumber) ?? 0) + 1
@@ -330,10 +391,12 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
   )
 
   const enc = await detectEncoder()
-  const wm = await loadWatermark()
-  const periodFrames = Math.max(1, Math.round(wm.frequencyMinutes * 60 * FPS))
+  const defaultWm = await loadWatermark()
   const logos = await prisma.logo.findMany()
   const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
+  // Each logo can carry its own watermark settings; legacy URL logos and the
+  // bundled fallback icon use the global default.
+  const logoWm = new Map<number, WatermarkConfig>(logos.map((l) => [l.id, parseWatermark(l.watermark, defaultWm)]))
 
   res.writeHead(200, {
     'Content-Type': 'video/mp2t',
@@ -373,9 +436,11 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
         continue
       }
       if (items.length === 0) {
-        await buildPlayout(channel.id, new Date(Date.now() + 4 * 3600 * 1000)).catch((e) =>
-          log('error', 'playout', `Playout refill failed for channel ${channelNumber}`, String(e?.stack || e)),
-        )
+        const built = await buildPlayout(channel.id, new Date(Date.now() + 4 * 3600 * 1000)).catch((e) => {
+          log('error', 'playout', `Playout refill failed for channel ${channelNumber}`, String(e?.stack || e))
+          return -1
+        })
+        if (built > 0) log('debug', 'playout', `Channel ${channelNumber}: refilled ${built} playout item(s) mid-stream`)
         const more = await prisma.playoutItem
           .count({ where: { channelId: channel.id, stopTime: { gt: cursor } } })
           .catch(() => 0)
@@ -387,28 +452,47 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
       }
       for (const item of items) {
         if (aborted) break
-        const logo = await localLogo(rawLogoFor(channel, channel.timeBlocks, logoPath, item.startTime))
+        const active = activeLogo(channel, channel.timeBlocks, logoPath, item.startTime)
+        const logo = await localLogo(active.raw)
+        // Per-logo watermark settings, else the global default.
+        const wm = active.id != null ? logoWm.get(active.id) ?? defaultWm : defaultWm
+        const periodFrames = Math.max(1, Math.round(wm.frequencyMinutes * 60 * FPS))
         const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
         first = false
         const mi = item.mediaItem
         const phaseFrames = Math.round((item.startTime.getTime() / 1000) * FPS) % periodFrames
         let seg: Segment | null = null
+        let label: string
 
         if (item.kind === 'filler' || !mi) {
           const fp = await getFillerClip()
           const dur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
-          if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo, phaseFrames }
+          if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo, phaseFrames, mediaWidth: W, mediaHeight: H }
+          label = `filler (${Math.round(dur)}s)`
         } else if (fs.existsSync(mi.path)) {
-          seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames }
+          seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames, mediaWidth: mi.width ?? W, mediaHeight: mi.height ?? H }
+          label = mi.showTitle
+            ? `${mi.showTitle}${mi.season != null && mi.episode != null ? ` S${String(mi.season).padStart(2, '0')}E${String(mi.episode).padStart(2, '0')}` : ''}${mi.title ? ` — ${mi.title}` : ''}`
+            : mi.title
         } else {
           log('warn', 'stream', `Channel ${channelNumber}: media file missing, skipping`, mi.path)
+          label = mi.title
         }
 
         if (!seg) {
           cursor = item.stopTime
           continue
         }
-        current = spawn('ffmpeg', ffmpegArgs(seg, enc, wm))
+        const args = ffmpegArgs(seg, enc, wm)
+        const wmDesc = wm.mode === 'none' || !logo ? 'no watermark' : `watermark ${wm.mode}/${wm.position}${wm.constrainToMedia ? '/media-fit' : ''}`
+        log(
+          'info',
+          'stream',
+          `Ch ${channelNumber} ▶ ${label}${offset > 1 ? ` (resuming at ${Math.round(offset)}s)` : ''}`,
+          `source ${seg.mediaWidth}x${seg.mediaHeight}, logo ${active.id != null ? '#' + active.id : active.raw ? 'url' : 'none'}, ${wmDesc}`,
+        )
+        log('debug', 'ffmpeg', `Ch ${channelNumber} ffmpeg command`, 'ffmpeg ' + args.join(' '))
+        current = spawn('ffmpeg', args)
         const result = await pipeSegment(current, res)
         current = null
         cursor = item.stopTime

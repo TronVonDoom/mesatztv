@@ -34,6 +34,10 @@ model Logo {
   name      String
   filename  String // stored under the data dir /logos
   mime      String
+  // Per-logo watermark settings (JSON WatermarkConfig). Null = inherit the
+  // global default watermark. Lets each logo carry its own mode/size/position/
+  // opacity/timing and the constrain-to-media flag.
+  watermark String?
   createdAt DateTime    @default(now())
   channels  Channel[]
   blocks    TimeBlock[]

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, logoImageUrl, type Logo } from '../lib/api'
+import { api, logoImageUrl, type Logo, type WatermarkConfig } from '../lib/api'
+import WatermarkFields from '../components/WatermarkFields'
 
 export default function Logos() {
   const [logos, setLogos] = useState<Logo[]>([])
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState<Logo | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const refresh = () => api.logos().then(setLogos).catch(() => {})
@@ -49,7 +51,9 @@ export default function Logos() {
     <div>
       <h1 className="text-2xl font-bold mb-1">Logos</h1>
       <p className="text-slate-400 text-sm mb-6">
-        Upload logos once, then pick them as channel or block watermarks (and guide images).
+        Upload logos once, then pick them as channel or block watermarks (and guide images). Each logo carries
+        its own watermark settings — click <span className="text-slate-300">Watermark</span> on a logo to tune
+        size, position, opacity, and timing.
       </p>
 
       {error && (
@@ -82,13 +86,95 @@ export default function Logos() {
                 <img src={logoImageUrl(l.id)} alt={l.name} className="max-h-full max-w-full object-contain" />
               </div>
               <div className="flex items-center gap-2 px-3 py-2">
-                <span className="text-sm truncate flex-1">{l.name}</span>
+                <span className="text-sm truncate flex-1" title={l.name}>{l.name}</span>
                 <button onClick={() => del(l.id)} className="text-slate-600 hover:text-rose-400 text-sm" aria-label="Delete">×</button>
+              </div>
+              <div className="px-3 pb-2 flex items-center justify-between">
+                <span className="text-[11px] text-slate-500">
+                  {l.watermark.mode === 'none'
+                    ? 'watermark off'
+                    : `${l.watermark.mode} · ${l.watermark.position}${l.watermark.constrainToMedia ? ' · media-fit' : ''}`}
+                </span>
+                <button
+                  onClick={() => setEditing(l)}
+                  className="text-xs rounded-md border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-2 py-0.5"
+                >
+                  Watermark
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {editing && (
+        <WatermarkEditor
+          logo={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(updated) => {
+            setLogos((ls) => ls.map((l) => (l.id === updated.id ? updated : l)))
+            setEditing(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function WatermarkEditor({
+  logo,
+  onClose,
+  onSaved,
+}: {
+  logo: Logo
+  onClose: () => void
+  onSaved: (l: Logo) => void
+}) {
+  const [wm, setWm] = useState<WatermarkConfig>(logo.watermark)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function save() {
+    setSaving(true)
+    setErr(null)
+    try {
+      const updated = await api.updateLogo(logo.id, { watermark: wm })
+      onSaved(updated)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Save failed')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-2xl rounded-xl border border-slate-700 bg-slate-900 p-5 max-h-[90vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-16 h-10 rounded flex items-center justify-center bg-[repeating-conic-gradient(#1e293b_0_25%,#0f172a_0_50%)] bg-[length:14px_14px] shrink-0">
+            <img src={logoImageUrl(logo.id)} alt={logo.name} className="max-h-full max-w-full object-contain" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="font-semibold truncate">{logo.name}</h2>
+            <p className="text-xs text-slate-500">Watermark settings for this logo</p>
+          </div>
+        </div>
+
+        {err && <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 text-sm p-2 mb-3">{err}</div>}
+
+        <WatermarkFields wm={wm} onChange={setWm} />
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="rounded-lg border border-slate-700 hover:border-slate-500 px-4 py-2 text-sm">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving} className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 px-5 py-2 text-sm font-medium">
+            {saving ? 'Saving…' : 'Save watermark'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

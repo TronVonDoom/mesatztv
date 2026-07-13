@@ -3,7 +3,7 @@ import { getLogs, clearLogs, dumpText, type LogLevel, type LogCategory } from '.
 
 export const logsRouter = Router()
 
-const LEVELS: LogLevel[] = ['info', 'warn', 'error']
+const LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error']
 const CATEGORIES: LogCategory[] = ['stream', 'ffmpeg', 'playout', 'system']
 
 // GET /api/logs?level=&category=&sinceId=&limit=

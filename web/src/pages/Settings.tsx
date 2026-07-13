@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type WatermarkConfig } from '../lib/api'
-
-const wmInp = 'rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm focus:border-indigo-500 outline-none'
+import WatermarkFields from '../components/WatermarkFields'
 
 export default function Settings() {
   const [configured, setConfigured] = useState<boolean | null>(null)
@@ -26,9 +25,6 @@ export default function Settings() {
       .catch(() => {})
   }, [])
 
-  function setWmField<K extends keyof WatermarkConfig>(k: K, v: WatermarkConfig[K]) {
-    setWm((w) => (w ? { ...w, [k]: v } : w))
-  }
   async function saveWm(e: React.FormEvent) {
     e.preventDefault()
     if (!wm) return
@@ -189,65 +185,16 @@ export default function Settings() {
 
       {wm && (
         <form onSubmit={saveWm} className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
-          <h2 className="font-semibold mb-1">Watermark (on-screen logo)</h2>
+          <h2 className="font-semibold mb-1">Default watermark (on-screen logo)</h2>
           <p className="text-slate-400 text-sm mb-4">
-            Overlays the channel/block logo on the live stream. Intermittent mode fades it in when
-            it appears and out when its time is up.
+            The fallback watermark for logos without their own settings (and legacy URL logos). Set
+            per-logo overrides on the <span className="text-slate-300">Logos</span> page. Intermittent
+            mode fades the logo in when it appears and out when its time is up.
           </p>
           {wmMsg && <div className="text-sm text-emerald-300 mb-3">{wmMsg}</div>}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-400">Mode</span>
-              <select className={wmInp} value={wm.mode} onChange={(e) => setWmField('mode', e.target.value as WatermarkConfig['mode'])}>
-                <option value="permanent">Permanent</option>
-                <option value="intermittent">Intermittent</option>
-                <option value="none">None</option>
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-400">Position</span>
-              <select className={wmInp} value={wm.position} onChange={(e) => setWmField('position', e.target.value as WatermarkConfig['position'])}>
-                <option value="bottom-right">Bottom Right</option>
-                <option value="bottom-left">Bottom Left</option>
-                <option value="top-right">Top Right</option>
-                <option value="top-left">Top Left</option>
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-400">Width %</span>
-              <input type="number" min={1} max={50} className={wmInp} value={wm.widthPercent} onChange={(e) => setWmField('widthPercent', Number(e.target.value))} />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-400">Opacity %</span>
-              <input type="number" min={0} max={100} className={wmInp} value={wm.opacityPercent} onChange={(e) => setWmField('opacityPercent', Number(e.target.value))} />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-400">H margin %</span>
-              <input type="number" min={0} max={45} className={wmInp} value={wm.horizontalMarginPercent} onChange={(e) => setWmField('horizontalMarginPercent', Number(e.target.value))} />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-400">V margin %</span>
-              <input type="number" min={0} max={45} className={wmInp} value={wm.verticalMarginPercent} onChange={(e) => setWmField('verticalMarginPercent', Number(e.target.value))} />
-            </label>
-            {wm.mode === 'intermittent' && (
-              <>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-slate-400">Every (min)</span>
-                  <input type="number" min={1} className={wmInp} value={wm.frequencyMinutes} onChange={(e) => setWmField('frequencyMinutes', Number(e.target.value))} />
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-slate-400">Duration (sec)</span>
-                  <input type="number" min={1} className={wmInp} value={wm.durationSeconds} onChange={(e) => setWmField('durationSeconds', Number(e.target.value))} />
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="text-slate-400">Fade (sec)</span>
-                  <input type="number" min={0} className={wmInp} value={wm.fadeSeconds} onChange={(e) => setWmField('fadeSeconds', Number(e.target.value))} />
-                </label>
-              </>
-            )}
-          </div>
+          <WatermarkFields wm={wm} onChange={setWm} />
           <div className="flex justify-end mt-3">
-            <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-5 py-2 text-sm font-medium">Save watermark</button>
+            <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-5 py-2 text-sm font-medium">Save default</button>
           </div>
         </form>
       )}

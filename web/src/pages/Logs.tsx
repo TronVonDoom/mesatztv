@@ -6,6 +6,7 @@ const LEVELS: { value: LogLevel | 'all'; label: string }[] = [
   { value: 'error', label: 'Errors' },
   { value: 'warn', label: 'Warnings' },
   { value: 'info', label: 'Info' },
+  { value: 'debug', label: 'Debug' },
 ]
 const CATEGORIES: { value: LogCategory | 'all'; label: string }[] = [
   { value: 'all', label: 'All sources' },
@@ -19,6 +20,7 @@ const levelStyle: Record<LogLevel, string> = {
   error: 'text-rose-300 border-rose-500/40 bg-rose-500/10',
   warn: 'text-amber-300 border-amber-500/40 bg-amber-500/10',
   info: 'text-sky-300 border-sky-500/30 bg-sky-500/10',
+  debug: 'text-slate-400 border-slate-600/40 bg-slate-600/10',
 }
 
 export default function Logs() {
@@ -28,6 +30,7 @@ export default function Logs() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [total, setTotal] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [flash, setFlash] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
 
@@ -65,6 +68,17 @@ export default function Logs() {
     const el = scrollRef.current
     if (!el) return
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  }
+
+  // Manual refresh: always jump to the newest entry and flash feedback, so it's
+  // obvious it ran even when no new lines arrived.
+  async function manualRefresh() {
+    stickToBottom.current = true
+    await refresh()
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+    setFlash(true)
+    setTimeout(() => setFlash(false), 600)
   }
 
   async function copyAll() {
@@ -148,8 +162,8 @@ export default function Logs() {
           <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
           Auto-refresh
         </label>
-        <button onClick={refresh} className="text-sm text-slate-400 hover:text-slate-200">
-          Refresh now
+        <button onClick={manualRefresh} className="text-sm text-slate-400 hover:text-slate-200">
+          {flash ? 'Refreshed ✓' : 'Refresh now'}
         </button>
         <span className="text-xs text-slate-600 ml-auto">{total} matching entries</span>
       </div>

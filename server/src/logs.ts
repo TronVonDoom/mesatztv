@@ -6,7 +6,7 @@ import { dataDir } from './paths.js'
 // backed by a size-rotated file under the data dir (survives restarts/crashes,
 // so an ffmpeg error that killed a stream is still there afterwards).
 
-export type LogLevel = 'info' | 'warn' | 'error'
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type LogCategory = 'stream' | 'ffmpeg' | 'playout' | 'system'
 
 export type LogEntry = {

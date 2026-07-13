@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { prisma } from '../db.js'
 import { logosDir } from '../paths.js'
+import { parseWatermark, sanitizeWatermark } from '../stream.js'
 
 export const logosRouter = Router()
 
@@ -15,7 +16,7 @@ const EXT: Record<string, string> = {
 
 logosRouter.get('/', async (_req, res) => {
   const logos = await prisma.logo.findMany({ orderBy: { createdAt: 'desc' } })
-  res.json(logos.map((l) => ({ id: l.id, name: l.name, mime: l.mime })))
+  res.json(logos.map((l) => ({ id: l.id, name: l.name, mime: l.mime, watermark: parseWatermark(l.watermark) })))
 })
 
 // Upload via a data URL (no multipart dependency needed).
@@ -34,7 +35,19 @@ logosRouter.post('/', async (req, res) => {
   const filename = `logo-${logo.id}.${ext}`
   fs.writeFileSync(path.join(logosDir(), filename), buf)
   await prisma.logo.update({ where: { id: logo.id }, data: { filename } })
-  res.status(201).json({ id: logo.id, name, mime })
+  res.status(201).json({ id: logo.id, name, mime, watermark: parseWatermark(logo.watermark) })
+})
+
+// Update a logo's name and/or its per-logo watermark settings.
+logosRouter.patch('/:id', async (req, res) => {
+  const id = Number(req.params.id)
+  const existing = await prisma.logo.findUnique({ where: { id } })
+  if (!existing) return res.status(404).json({ error: 'Logo not found' })
+  const data: { name?: string; watermark?: string } = {}
+  if (typeof req.body?.name === 'string' && req.body.name.trim()) data.name = req.body.name.trim()
+  if (req.body?.watermark !== undefined) data.watermark = JSON.stringify(sanitizeWatermark(req.body.watermark))
+  const updated = await prisma.logo.update({ where: { id }, data })
+  res.json({ id: updated.id, name: updated.name, mime: updated.mime, watermark: parseWatermark(updated.watermark) })
 })
 
 logosRouter.get('/:id/image', async (req, res) => {
