@@ -114,10 +114,12 @@ export type WatermarkConfig = {
   constrainToMedia: boolean
 }
 
+export type FillerStyle = 'animated' | 'frosted' | 'custom'
 export type SettingsInfo = {
   tmdbConfigured: boolean
   fillerPath: string | null
   fillerMusicPath: string | null
+  fillerStyle: FillerStyle
   watermark: WatermarkConfig
 }
 
@@ -358,6 +360,8 @@ export const api = {
     request<{ ok: boolean; path: string | null }>('/api/settings/filler', { method: 'POST', body: JSON.stringify({ path }) }),
   setFillerMusic: (path: string) =>
     request<{ ok: boolean; path: string | null }>('/api/settings/filler/music', { method: 'POST', body: JSON.stringify({ path }) }),
+  setFillerStyle: (style: FillerStyle) =>
+    request<{ ok: boolean; style: FillerStyle }>('/api/settings/filler/style', { method: 'POST', body: JSON.stringify({ style }) }),
   saveWatermark: (wm: WatermarkConfig) =>
     request<{ ok: boolean; watermark: WatermarkConfig }>('/api/settings/watermark', { method: 'POST', body: JSON.stringify(wm) }),
 

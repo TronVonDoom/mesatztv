@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, backupUrl, type WatermarkConfig } from '../lib/api'
+import { api, backupUrl, type FillerStyle, type WatermarkConfig } from '../lib/api'
 import WatermarkFields from '../components/WatermarkFields'
 
 export default function Settings() {
@@ -9,6 +9,7 @@ export default function Settings() {
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [fillerPath, setFillerPath] = useState<string | null>(null)
   const [fillerMusicPath, setFillerMusicPath] = useState<string | null>(null)
+  const [fillerStyle, setFillerStyle] = useState<FillerStyle>('animated')
   const [provide, setProvide] = useState('')
   const [music, setMusic] = useState('')
   const [fillerBusy, setFillerBusy] = useState(false)
@@ -26,6 +27,7 @@ export default function Settings() {
         setConfigured(s.tmdbConfigured)
         setFillerPath(s.fillerPath)
         setFillerMusicPath(s.fillerMusicPath)
+        setFillerStyle(s.fillerStyle)
         setWm(s.watermark)
       })
       .catch(() => {})
@@ -41,6 +43,21 @@ export default function Settings() {
       setWmMsg('Watermark saved. ✅')
     } catch (err) {
       setWmMsg(err instanceof Error ? err.message : 'Failed to save watermark')
+    }
+  }
+
+  async function chooseStyle(style: FillerStyle) {
+    setFillerStyle(style)
+    setFillerMsg(null)
+    try {
+      await api.setFillerStyle(style)
+      setFillerMsg(
+        style === 'frosted'
+          ? 'Frosted-glass filler selected. It renders per channel on the next intermission (or restart).'
+          : 'Filler style updated. ✅',
+      )
+    } catch (e) {
+      setFillerMsg(e instanceof Error ? e.message : 'Failed to set style')
     }
   }
 
@@ -187,9 +204,35 @@ export default function Settings() {
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
         <h2 className="font-semibold mb-1">Filler (station ID)</h2>
         <p className="text-slate-400 text-sm mb-3">
-          Fills gaps in time blocks. The channel/block logo is overlaid live, so a plain ambient
-          clip works for every channel.
+          Plays during gaps between programs. Pick a style below.
         </p>
+
+        <div className="grid sm:grid-cols-3 gap-2 mb-4">
+          {([
+            { id: 'animated', title: 'Animated', desc: 'Drifting gradient with subtle motion.' },
+            { id: 'frosted', title: 'Frosted glass', desc: 'Channel + MeSatzTV logos scrolling behind glass.' },
+            { id: 'custom', title: 'Custom clip', desc: 'Use your own uploaded/linked video.' },
+          ] as const).map((o) => (
+            <button
+              key={o.id}
+              onClick={() => chooseStyle(o.id)}
+              className={
+                'text-left rounded-lg border p-3 transition-colors ' +
+                (fillerStyle === o.id
+                  ? 'border-indigo-400 bg-indigo-500/10'
+                  : 'border-slate-700 hover:border-slate-500')
+              }
+            >
+              <div className="text-sm font-medium">{o.title}</div>
+              <div className="text-xs text-slate-400 mt-0.5">{o.desc}</div>
+            </button>
+          ))}
+        </div>
+        <p className="text-slate-500 text-xs mb-3">
+          Upload audio &amp; custom filler clips on the <span className="text-slate-300">Media</span> page.
+          For custom, set the clip below or use “Set as filler visual” in Media.
+        </p>
+
         <div className="text-xs mb-3">
           Current:{' '}
           {fillerPath ? (

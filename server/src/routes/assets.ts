@@ -90,6 +90,10 @@ assetsRouter.post('/:id/use', async (req, res) => {
   const p = await assetPath(id)
   if (!p) return res.status(404).json({ error: 'asset file not found' })
   await prisma.setting.upsert({ where: { key }, create: { key, value: p }, update: { value: p } })
+  // Using a filler clip implies the "custom" filler style.
+  if (as === 'filler') {
+    await prisma.setting.upsert({ where: { key: 'filler_style' }, create: { key: 'filler_style', value: 'custom' }, update: { value: 'custom' } })
+  }
   res.json({ ok: true, path: p })
 })
 

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getTmdbKey, setTmdbKey, validateKey } from '../tmdb.js'
-import { generateFiller, loadWatermark, sanitizeWatermark } from '../stream.js'
+import { generateFiller, loadWatermark, sanitizeWatermark, warmFiller } from '../stream.js'
 import { prisma } from '../db.js'
 
 export const settingsRouter = Router()
@@ -25,8 +25,22 @@ settingsRouter.get('/', async (_req, res) => {
     tmdbConfigured: !!key,
     fillerPath: await getSetting('filler_path'),
     fillerMusicPath: await getSetting('filler_music'),
+    fillerStyle: (await getSetting('filler_style')) || 'animated',
     watermark: await loadWatermark(),
   })
+})
+
+// Choose the filler style: 'animated' | 'frosted' | 'custom'.
+settingsRouter.post('/filler/style', async (req, res) => {
+  const style = String(req.body?.style ?? '')
+  if (!['animated', 'frosted', 'custom'].includes(style)) {
+    return res.status(400).json({ error: 'style must be animated, frosted, or custom' })
+  }
+  await setSetting('filler_style', style)
+  // Pre-render frosted clips in the background so the next intermission doesn't
+  // block on generation.
+  if (style === 'frosted') warmFiller().catch(() => {})
+  res.json({ ok: true, style })
 })
 
 settingsRouter.post('/watermark', async (req, res) => {
@@ -41,6 +55,7 @@ settingsRouter.post('/filler/generate', async (_req, res) => {
   try {
     await generateFiller(out)
     await setSetting('filler_path', out)
+    await setSetting('filler_style', 'custom')
     res.json({ ok: true, path: out })
   } catch {
     res.status(500).json({ error: 'Could not generate filler (ffmpeg failed).' })
@@ -51,11 +66,14 @@ settingsRouter.post('/filler/generate', async (_req, res) => {
 settingsRouter.post('/filler', async (req, res) => {
   const p = String(req.body?.path ?? '').trim()
   if (!p) {
+    // Clearing the custom clip falls back to the animated style.
     await setSetting('filler_path', null)
+    if ((await getSetting('filler_style')) === 'custom') await setSetting('filler_style', 'animated')
     return res.json({ ok: true, path: null })
   }
   if (!fs.existsSync(p)) return res.status(400).json({ error: `File not found: ${p}` })
   await setSetting('filler_path', p)
+  await setSetting('filler_style', 'custom')
   res.json({ ok: true, path: p })
 })
 
