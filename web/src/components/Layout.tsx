@@ -7,6 +7,7 @@ const navItems = [
   { to: '/collections', label: 'Collections', icon: '🗂️' },
   { to: '/libraries', label: 'Libraries', icon: '📁' },
   { to: '/logos', label: 'Logos', icon: '🖼️' },
+  { to: '/logs', label: 'Logs', icon: '📜' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 

@@ -3,11 +3,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import type { Response } from 'express'
+import type { Request, Response } from 'express'
 import type { Channel, TimeBlock } from '@prisma/client'
 import { prisma } from './db.js'
 import { buildPlayout, prunePlayout } from './playout.js'
 import { logosDir } from './paths.js'
+import { log } from './logs.js'
 
 // Normalized output format — every item is transcoded to these exact params so
 // the concatenated MPEG-TS is a single continuous, seamless stream.
@@ -58,8 +59,15 @@ function detectEncoder(): Promise<string> {
     let out = ''
     const p = spawn('ffmpeg', ['-hide_banner', '-encoders'])
     p.stdout.on('data', (d) => (out += d))
-    p.on('error', () => resolve((encoderCache = 'libx264')))
-    p.on('close', () => resolve((encoderCache = out.includes('h264_nvenc') ? 'h264_nvenc' : 'libx264')))
+    p.on('error', () => {
+      log('warn', 'ffmpeg', 'Could not run ffmpeg to detect encoders; falling back to libx264')
+      resolve((encoderCache = 'libx264'))
+    })
+    p.on('close', () => {
+      const enc = out.includes('h264_nvenc') ? 'h264_nvenc' : 'libx264'
+      log('info', 'ffmpeg', `Video encoder selected: ${enc}`)
+      resolve((encoderCache = enc))
+    })
   })
 }
 
@@ -236,31 +244,62 @@ async function getFillerClip(): Promise<string | undefined> {
   return fs.existsSync(out) ? (fillerClipCache = out) : undefined
 }
 
-/** Pipe a child's stdout to the response with backpressure; resolve on exit. */
-function pipeSegment(proc: ChildProcess, res: Response): Promise<void> {
+type SegmentResult = { code: number | null; stderr: string; spawnError?: Error }
+
+/**
+ * Pipe a child's stdout to the response with backpressure; resolve on exit.
+ * Captures a tail of stderr and the exit code so the caller can log failures.
+ */
+function pipeSegment(proc: ChildProcess, res: Response): Promise<SegmentResult> {
   return new Promise((resolve) => {
+    let stderr = ''
+    let spawnError: Error | undefined
+    proc.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString()
+      if (stderr.length > 6000) stderr = stderr.slice(-6000) // keep the tail
+    })
     const onData = (chunk: Buffer) => {
       if (!res.write(chunk)) proc.stdout?.pause()
     }
     const onDrain = () => proc.stdout?.resume()
     proc.stdout?.on('data', onData)
     res.on('drain', onDrain)
-    const done = () => {
+    let settled = false
+    const done = (code: number | null) => {
+      if (settled) return
+      settled = true
       res.off('drain', onDrain)
-      resolve()
+      resolve({ code, stderr: stderr.trim(), spawnError })
     }
-    proc.on('close', done)
-    proc.on('error', done)
+    proc.on('close', (code) => done(code))
+    proc.on('error', (err) => {
+      spawnError = err
+      done(null)
+    })
   })
 }
 
+function clientInfo(req?: Request): string {
+  if (!req) return 'unknown client'
+  const ip =
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  const ua = (req.headers['user-agent'] as string) || 'unknown'
+  return `${ip} — ${ua}`
+}
+
+// Count of live viewers per channel number, for logging concurrency.
+const viewers = new Map<number, number>()
+
 /** Stream a channel's playout as a continuous MPEG-TS to `res`. */
-export async function streamChannel(channelNumber: number, res: Response): Promise<void> {
+export async function streamChannel(channelNumber: number, res: Response, req?: Request): Promise<void> {
   const channel = await prisma.channel.findFirst({
     where: { number: channelNumber },
     include: { timeBlocks: true, rotationItems: true },
   })
   if (!channel) {
+    log('warn', 'stream', `Rejected stream: channel ${channelNumber} not found (${clientInfo(req)})`)
     res.status(404).end()
     return
   }
@@ -269,12 +308,26 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
   const now = Date.now()
   if (!channel.playoutCursor || channel.playoutCursor.getTime() < now + 30 * 60 * 1000) {
     if (channel.rotationItems.length === 0 && channel.timeBlocks.length === 0) {
+      log('warn', 'stream', `Channel ${channelNumber} (${channel.name}) has nothing scheduled — no rotation or time blocks`)
       res.status(409).end() // nothing scheduled
       return
     }
-    await prunePlayout(channel.id).catch(() => {})
-    await buildPlayout(channel.id, new Date(now + 4 * 3600 * 1000)).catch(() => {})
+    await prunePlayout(channel.id).catch((e) =>
+      log('warn', 'playout', `Prune failed for channel ${channelNumber}`, String(e)),
+    )
+    await buildPlayout(channel.id, new Date(now + 4 * 3600 * 1000)).catch((e) =>
+      log('error', 'playout', `Playout build failed for channel ${channelNumber}`, String(e?.stack || e)),
+    )
   }
+
+  const nViewers = (viewers.get(channelNumber) ?? 0) + 1
+  viewers.set(channelNumber, nViewers)
+  log(
+    'info',
+    'stream',
+    `▶ Channel ${channelNumber} (${channel.name}) connected — ${nViewers} viewer(s) now watching this channel`,
+    clientInfo(req),
+  )
 
   const enc = await detectEncoder()
   const wm = await loadWatermark()
@@ -289,6 +342,7 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
   })
 
   let aborted = false
+  let reason = 'client disconnected'
   let current: ChildProcess | null = null
   res.on('close', () => {
     aborted = true
@@ -298,47 +352,85 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
   // Walk playout items from now forward, refilling as we go.
   let cursor = new Date()
   let first = true
-  while (!aborted) {
-    const items = await prisma.playoutItem.findMany({
-      where: { channelId: channel.id, stopTime: { gt: cursor } },
-      orderBy: { startTime: 'asc' },
-      take: 100,
-      include: { mediaItem: true },
-    })
-    if (items.length === 0) {
-      await buildPlayout(channel.id, new Date(Date.now() + 4 * 3600 * 1000)).catch(() => {})
-      const more = await prisma.playoutItem.count({ where: { channelId: channel.id, stopTime: { gt: cursor } } })
-      if (more === 0) break
-      continue
-    }
-    for (const item of items) {
-      if (aborted) break
-      const logo = await localLogo(rawLogoFor(channel, channel.timeBlocks, logoPath, item.startTime))
-      const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
-      first = false
-      const mi = item.mediaItem
-      const phaseFrames = Math.round((item.startTime.getTime() / 1000) * FPS) % periodFrames
-      let seg: Segment | null = null
-
-      if (item.kind === 'filler' || !mi) {
-        const fp = await getFillerClip()
-        const dur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
-        if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo, phaseFrames }
-      } else if (fs.existsSync(mi.path)) {
-        seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames }
-      }
-
-      if (!seg) {
-        cursor = item.stopTime
+  try {
+    while (!aborted) {
+      // A transient DB error must not kill an in-flight stream — retry briefly
+      // (WAL + busy_timeout make this rare, but a lock during another viewer's
+      // build could still surface here).
+      const items = await prisma.playoutItem
+        .findMany({
+          where: { channelId: channel.id, stopTime: { gt: cursor } },
+          orderBy: { startTime: 'asc' },
+          take: 100,
+          include: { mediaItem: true },
+        })
+        .catch((e) => {
+          log('warn', 'stream', `Channel ${channelNumber}: DB read failed, retrying`, String(e))
+          return null
+        })
+      if (items === null) {
+        await new Promise((r) => setTimeout(r, 500))
         continue
       }
-      current = spawn('ffmpeg', ffmpegArgs(seg, enc, wm))
-      current.stderr?.on('data', () => {}) // drain stderr
-      await pipeSegment(current, res)
-      current = null
-      cursor = item.stopTime
+      if (items.length === 0) {
+        await buildPlayout(channel.id, new Date(Date.now() + 4 * 3600 * 1000)).catch((e) =>
+          log('error', 'playout', `Playout refill failed for channel ${channelNumber}`, String(e?.stack || e)),
+        )
+        const more = await prisma.playoutItem
+          .count({ where: { channelId: channel.id, stopTime: { gt: cursor } } })
+          .catch(() => 0)
+        if (more === 0) {
+          reason = 'playout exhausted (nothing left to play)'
+          break
+        }
+        continue
+      }
+      for (const item of items) {
+        if (aborted) break
+        const logo = await localLogo(rawLogoFor(channel, channel.timeBlocks, logoPath, item.startTime))
+        const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
+        first = false
+        const mi = item.mediaItem
+        const phaseFrames = Math.round((item.startTime.getTime() / 1000) * FPS) % periodFrames
+        let seg: Segment | null = null
+
+        if (item.kind === 'filler' || !mi) {
+          const fp = await getFillerClip()
+          const dur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
+          if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo, phaseFrames }
+        } else if (fs.existsSync(mi.path)) {
+          seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames }
+        } else {
+          log('warn', 'stream', `Channel ${channelNumber}: media file missing, skipping`, mi.path)
+        }
+
+        if (!seg) {
+          cursor = item.stopTime
+          continue
+        }
+        current = spawn('ffmpeg', ffmpegArgs(seg, enc, wm))
+        const result = await pipeSegment(current, res)
+        current = null
+        cursor = item.stopTime
+        // Log ffmpeg trouble (but not the SIGKILL we send on disconnect).
+        if (!aborted) {
+          if (result.spawnError) {
+            log('error', 'ffmpeg', `Channel ${channelNumber}: failed to launch ffmpeg for ${path.basename(seg.filePath)}`, String(result.spawnError))
+          } else if (result.code && result.code !== 0) {
+            log('error', 'ffmpeg', `Channel ${channelNumber}: ffmpeg exited ${result.code} on ${path.basename(seg.filePath)}`, result.stderr || '(no stderr)')
+          } else if (result.stderr) {
+            log('warn', 'ffmpeg', `Channel ${channelNumber}: ffmpeg warnings on ${path.basename(seg.filePath)}`, result.stderr)
+          }
+        }
+      }
     }
+  } catch (e) {
+    reason = 'internal error'
+    log('error', 'stream', `Channel ${channelNumber}: stream loop crashed`, String((e as Error)?.stack || e))
   }
 
+  const left = (viewers.get(channelNumber) ?? 1) - 1
+  viewers.set(channelNumber, Math.max(0, left))
+  log('info', 'stream', `⏹ Channel ${channelNumber} (${channel.name}) stream ended — ${reason}; ${Math.max(0, left)} viewer(s) still watching`)
   if (!res.writableEnded) res.end()
 }

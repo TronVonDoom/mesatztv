@@ -7,7 +7,7 @@ export const iptvRouter = Router()
 
 // Live stream: GET /iptv/channel/1.ts
 iptvRouter.get(/^\/channel\/(\d+)\.ts$/, (req, res) => {
-  streamChannel(Number((req.params as unknown as string[])[0]), res).catch(() => {
+  streamChannel(Number((req.params as unknown as string[])[0]), res, req).catch(() => {
     if (!res.headersSent) res.status(500).end()
   })
 })

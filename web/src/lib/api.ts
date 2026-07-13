@@ -250,6 +250,18 @@ export type PlayoutEntry = {
 
 export type Playout = { now: string; items: PlayoutEntry[] }
 
+export type LogLevel = 'info' | 'warn' | 'error'
+export type LogCategory = 'stream' | 'ffmpeg' | 'playout' | 'system'
+export type LogEntry = {
+  id: number
+  ts: string
+  level: LogLevel
+  category: LogCategory
+  message: string
+  detail?: string
+}
+export type LogsResponse = { entries: LogEntry[]; lastId: number; total: number }
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -402,7 +414,20 @@ export const api = {
     request<{ ok: boolean }>(`/api/channels/${channelId}/reset${hard ? '?hard=1' : ''}`, { method: 'POST' }),
   playout: (channelId: number, hours = 24) =>
     request<Playout>(`/api/channels/${channelId}/playout?hours=${hours}`),
+
+  // --- logs ---
+  logs: (params: { level?: LogLevel; category?: LogCategory; limit?: number } = {}) => {
+    const qs = new URLSearchParams()
+    if (params.level) qs.set('level', params.level)
+    if (params.category) qs.set('category', params.category)
+    if (params.limit) qs.set('limit', String(params.limit))
+    const q = qs.toString()
+    return request<LogsResponse>(`/api/logs${q ? `?${q}` : ''}`)
+  },
+  clearLogs: () => request<void>('/api/logs', { method: 'DELETE' }),
 }
+
+export const logsDownloadUrl = '/api/logs/download'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 

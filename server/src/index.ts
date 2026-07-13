@@ -2,7 +2,8 @@ import express from 'express'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
-import { prisma } from './db.js'
+import { prisma, initDb } from './db.js'
+import { log } from './logs.js'
 import { librariesRouter } from './routes/libraries.js'
 import { mediaRouter } from './routes/media.js'
 import { scanRouter } from './routes/scan.js'
@@ -15,6 +16,7 @@ import { collectionsRouter } from './routes/collections.js'
 import { channelsRouter } from './routes/channels.js'
 import { iptvRouter } from './routes/iptv.js'
 import { logosRouter } from './routes/logos.js'
+import { logsRouter } from './routes/logs.js'
 
 const app = express()
 const PORT = Number(process.env.PORT ?? 8688)
@@ -87,6 +89,7 @@ app.use('/api/metadata', metadataRouter)
 app.use('/api/collections', collectionsRouter)
 app.use('/api/channels', channelsRouter)
 app.use('/api/logos', logosRouter)
+app.use('/api/logs', logsRouter)
 app.use('/iptv', iptvRouter)
 
 // --- Static frontend (production only) --------------------------------------
@@ -116,11 +119,13 @@ async function backfillLibraryFolders(): Promise<void> {
 }
 
 async function boot(): Promise<void> {
+  await initDb()
   await backfillLibraryFolders()
   await checkFfmpeg()
   app.listen(PORT, () => {
     console.log(`MeSatzTV v${VERSION} listening on http://0.0.0.0:${PORT}`)
     console.log(`ffmpeg available: ${ffmpegAvailable}`)
+    log('info', 'system', `MeSatzTV v${VERSION} started — ffmpeg ${ffmpegAvailable ? 'available' : 'NOT available'}`)
   })
 }
 
