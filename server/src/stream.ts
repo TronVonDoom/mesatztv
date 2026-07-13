@@ -7,7 +7,7 @@ import type { Request, Response } from 'express'
 import type { Channel, TimeBlock } from '@prisma/client'
 import { prisma } from './db.js'
 import { buildPlayout, prunePlayout } from './playout.js'
-import { logosDir } from './paths.js'
+import { dataDir, logosDir } from './paths.js'
 import { log } from './logs.js'
 
 // Normalized output format — every item is transcoded to these exact params so
@@ -117,6 +117,8 @@ type Segment = {
   phaseFrames: number // intermittent watermark phase (for cross-segment continuity)
   mediaWidth: number // source pixel dims (for constrain-to-media watermark)
   mediaHeight: number
+  musicPath?: string // looped ambient audio (filler only) — overrides clip audio
+  tsOffsetSec: number // cumulative output timestamp offset (keeps PTS monotonic across segments)
 }
 
 // The rectangle the picture occupies inside the WxH output canvas after
@@ -177,17 +179,23 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
   const a: string[] = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-fflags', '+genpts']
   if (seg.offsetSec > 0.1) a.push('-ss', seg.offsetSec.toFixed(3))
   if (seg.loop) a.push('-stream_loop', '-1')
-  a.push('-re', '-i', seg.filePath)
+  a.push('-re', '-i', seg.filePath) // input 0 = main video
 
+  let idx = 1
   let logoIdx = -1
   if (useWatermark) {
+    logoIdx = idx++
     a.push('-i', seg.logo as string)
-    logoIdx = 1
   }
-  let silentIdx = -1
-  if (!seg.hasAudio) {
+  // Audio source: ambient music (looped) overrides the clip's own audio; else
+  // silence when the source has none.
+  let audioIdx = -1 // -1 = use the main input's audio (0:a)
+  if (seg.musicPath) {
+    audioIdx = idx++
+    a.push('-stream_loop', '-1', '-i', seg.musicPath)
+  } else if (!seg.hasAudio) {
+    audioIdx = idx++
     a.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo')
-    silentIdx = useWatermark ? 2 : 1
   }
   if (seg.durationSec) a.push('-t', seg.durationSec.toFixed(3))
 
@@ -203,13 +211,18 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
   } else {
     vf = `${base}[v]`
   }
-  const aIn = seg.hasAudio ? '0:a:0' : `${silentIdx}:a:0`
+  const aIn = audioIdx >= 0 ? `${audioIdx}:a:0` : '0:a:0'
   const af = `[${aIn}]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a]`
 
   a.push('-filter_complex', `${vf};${af}`, '-map', '[v]', '-map', '[a]')
   a.push(...encoderArgs(enc))
   a.push('-c:a', 'aac', '-ar', '48000', '-ac', '2', '-b:a', '192k')
-  a.push('-avoid_negative_ts', 'make_zero', '-f', 'mpegts', '-muxpreload', '0', '-muxdelay', '0', 'pipe:1')
+  // Continuous timestamps: each segment's frames start at 0 (setpts above), and
+  // -output_ts_offset shifts them to follow the previous segment so the muxed
+  // MPEG-TS never jumps backwards. Backwards PTS at a boundary is what makes
+  // players freeze/black-out until they reconnect.
+  a.push('-output_ts_offset', seg.tsOffsetSec.toFixed(3))
+  a.push('-mpegts_flags', '+resend_headers', '-f', 'mpegts', '-muxpreload', '0', '-muxdelay', '0', 'pipe:1')
   return a
 }
 
@@ -275,49 +288,110 @@ async function localLogo(raw: string | null): Promise<string | undefined> {
   return result
 }
 
-/** Generate a loopable ambient station-ID clip (gradient background + soft tone). */
-export function generateFiller(out: string): Promise<void> {
+function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const args = [
-      '-y',
-      '-f', 'lavfi', '-i', 'gradients=s=1280x720:d=20:speed=0.015:c0=0x111827:c1=0x4c1d95:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4',
-      '-f', 'lavfi', '-i', 'sine=f=98:d=20,volume=0.06',
-      '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
-    ]
     const p = spawn('ffmpeg', args)
-    p.stderr?.on('data', () => {})
+    let err = ''
+    p.stderr?.on('data', (d) => (err += d))
     p.on('error', reject)
-    p.on('close', (c) => (c === 0 ? resolve() : reject(new Error('filler generation failed'))))
+    p.on('close', (c) => (c === 0 ? resolve() : reject(new Error('ffmpeg exited ' + c + ': ' + err.slice(-500)))))
   })
 }
 
-// Resolve the filler clip: user-provided (setting) else an auto-generated default.
-let fillerClipCache: string | undefined
+const FILLER_D = 30
+// Preferred look: a drifting color gradient with a slow hue sway, animated
+// grain and a vignette (visible motion to keep viewers hanging tight). Loops
+// smoothly (hue uses a sine that returns to 0 at the end).
+function fillerArgsAnimated(out: string): string[] {
+  return [
+    '-y',
+    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${FILLER_D}:speed=0.05:c0=0x0b1020:c1=0x3b1d60:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4`,
+    '-f', 'lavfi', '-i', `sine=f=110:d=${FILLER_D},volume=0.05`,
+    '-filter_complex',
+    `[0:v]hue=H='0.5*sin(2*PI*t/${FILLER_D})':s='1.05+0.05*sin(2*PI*t/${FILLER_D})',noise=alls=6:allf=t,vignette=PI/4.5,fps=${FPS},format=yuv420p[v]`,
+    '-map', '[v]', '-map', '1:a',
+    '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
+  ]
+}
+// Proven fallback (the original) in case a filter isn't available on this build.
+function fillerArgsBasic(out: string): string[] {
+  return [
+    '-y',
+    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=20:speed=0.02:c0=0x111827:c1=0x4c1d95:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4`,
+    '-f', 'lavfi', '-i', 'sine=f=98:d=20,volume=0.06',
+    '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
+  ]
+}
+
+/** Generate a loopable ambient "please stand by" clip (animated, with a fallback). */
+export async function generateFiller(out: string): Promise<void> {
+  try {
+    await runFfmpeg(fillerArgsAnimated(out))
+  } catch (e) {
+    log('warn', 'system', 'Animated filler failed, using basic gradient fallback', String(e))
+    await runFfmpeg(fillerArgsBasic(out))
+  }
+}
+
+// Bump when generateFiller changes so the persisted default regenerates.
+const FILLER_VERSION = 2
+function autoFillerPath(): string {
+  return path.join(dataDir(), `filler-auto-v${FILLER_VERSION}.mp4`)
+}
+
+// Resolve the filler clip: user-provided (setting) else the auto-generated
+// default (persisted under the data dir so it survives restarts).
 async function getFillerClip(): Promise<string | undefined> {
   const s = await prisma.setting.findUnique({ where: { key: 'filler_path' } })
   if (s?.value && fs.existsSync(s.value)) return s.value
-  const out = path.join(os.tmpdir(), 'mesatztv-filler.mp4')
-  if (fs.existsSync(out)) return (fillerClipCache = out)
-  await generateFiller(out).catch(() => {})
-  return fs.existsSync(out) ? (fillerClipCache = out) : undefined
+  const out = autoFillerPath()
+  if (fs.existsSync(out)) return out
+  log('info', 'system', 'Generating default animated filler clip (one-time)…')
+  const ok = await generateFiller(out)
+    .then(() => true)
+    .catch((e) => {
+      log('error', 'system', 'Filler generation failed', String(e))
+      return false
+    })
+  return ok && fs.existsSync(out) ? out : undefined
 }
 
-type SegmentResult = { code: number | null; stderr: string; spawnError?: Error }
+// Optional ambient music played during intermissions (loops under the filler).
+async function getFillerMusic(): Promise<string | undefined> {
+  const s = await prisma.setting.findUnique({ where: { key: 'filler_music' } })
+  return s?.value && fs.existsSync(s.value) ? s.value : undefined
+}
+
+/** Pre-build the default filler at boot so it never blocks a live stream. */
+export async function warmFiller(): Promise<void> {
+  const fp = await getFillerClip().catch(() => undefined)
+  if (fp) log('info', 'system', `Filler clip ready: ${fp}`)
+  else log('warn', 'system', 'No filler clip available — gaps will play black')
+}
+
+type SegmentResult = { code: number | null; stderr: string; spawnError?: Error; bytes: number; firstByteMs: number }
 
 /**
  * Pipe a child's stdout to the response with backpressure; resolve on exit.
- * Captures a tail of stderr and the exit code so the caller can log failures.
+ * Captures a tail of stderr, the exit code, bytes written, and how long until
+ * the first byte arrived (a big first-byte delay is a stall the viewer sees).
  */
 function pipeSegment(proc: ChildProcess, res: Response): Promise<SegmentResult> {
   return new Promise((resolve) => {
     let stderr = ''
     let spawnError: Error | undefined
+    let bytes = 0
+    let firstByteMs = -1
+    const t0 = Date.now()
     proc.stderr?.on('data', (d: Buffer) => {
       stderr += d.toString()
       if (stderr.length > 6000) stderr = stderr.slice(-6000) // keep the tail
     })
     const onData = (chunk: Buffer) => {
+      if (firstByteMs < 0) firstByteMs = Date.now() - t0
+      bytes += chunk.length
       if (!res.write(chunk)) proc.stdout?.pause()
     }
     const onDrain = () => proc.stdout?.resume()
@@ -328,7 +402,7 @@ function pipeSegment(proc: ChildProcess, res: Response): Promise<SegmentResult> 
       if (settled) return
       settled = true
       res.off('drain', onDrain)
-      resolve({ code, stderr: stderr.trim(), spawnError })
+      resolve({ code, stderr: stderr.trim(), spawnError, bytes, firstByteMs })
     }
     proc.on('close', (code) => done(code))
     proc.on('error', (err) => {
@@ -392,11 +466,13 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
 
   const enc = await detectEncoder()
   const defaultWm = await loadWatermark()
+  const fillerMusic = await getFillerMusic()
   const logos = await prisma.logo.findMany()
   const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
   // Each logo can carry its own watermark settings; legacy URL logos and the
   // bundled fallback icon use the global default.
   const logoWm = new Map<number, WatermarkConfig>(logos.map((l) => [l.id, parseWatermark(l.watermark, defaultWm)]))
+  if (fillerMusic) log('debug', 'stream', `Channel ${channelNumber}: intermission music ${path.basename(fillerMusic)}`)
 
   res.writeHead(200, {
     'Content-Type': 'video/mp2t',
@@ -415,6 +491,10 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
   // Walk playout items from now forward, refilling as we go.
   let cursor = new Date()
   let first = true
+  // Cumulative output-timestamp offset so PTS climbs monotonically across every
+  // segment (no backwards jump at boundaries). A tiny epsilon per boundary biases
+  // slightly forward so frame-rounding never overlaps into the previous segment.
+  let tsOffset = 0
   try {
     while (!aborted) {
       // A transient DB error must not kill an in-flight stream — retry briefly
@@ -461,16 +541,20 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
         first = false
         const mi = item.mediaItem
         const phaseFrames = Math.round((item.startTime.getTime() / 1000) * FPS) % periodFrames
+        const segDur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
         let seg: Segment | null = null
         let label: string
 
         if (item.kind === 'filler' || !mi) {
+          const genStart = Date.now()
           const fp = await getFillerClip()
-          const dur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
-          if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo, phaseFrames, mediaWidth: W, mediaHeight: H }
-          label = `filler (${Math.round(dur)}s)`
+          const genMs = Date.now() - genStart
+          if (genMs > 500) log('warn', 'system', `Channel ${channelNumber}: filler clip resolve blocked ${genMs}ms (should be pre-warmed)`)
+          if (fp && segDur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, phaseFrames, mediaWidth: W, mediaHeight: H, musicPath: fillerMusic, tsOffsetSec: tsOffset }
+          label = `filler (${Math.round(segDur)}s)${fillerMusic ? ' +music' : ''}`
+          if (!fp) log('error', 'stream', `Channel ${channelNumber}: no filler clip — a ${Math.round(segDur)}s gap will play black`)
         } else if (fs.existsSync(mi.path)) {
-          seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames, mediaWidth: mi.width ?? W, mediaHeight: mi.height ?? H }
+          seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames, mediaWidth: mi.width ?? W, mediaHeight: mi.height ?? H, tsOffsetSec: tsOffset }
           label = mi.showTitle
             ? `${mi.showTitle}${mi.season != null && mi.episode != null ? ` S${String(mi.season).padStart(2, '0')}E${String(mi.episode).padStart(2, '0')}` : ''}${mi.title ? ` — ${mi.title}` : ''}`
             : mi.title
@@ -489,21 +573,34 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
           'info',
           'stream',
           `Ch ${channelNumber} ▶ ${label}${offset > 1 ? ` (resuming at ${Math.round(offset)}s)` : ''}`,
-          `source ${seg.mediaWidth}x${seg.mediaHeight}, logo ${active.id != null ? '#' + active.id : active.raw ? 'url' : 'none'}, ${wmDesc}`,
+          `source ${seg.mediaWidth}x${seg.mediaHeight}, logo ${active.id != null ? '#' + active.id : active.raw ? 'url' : 'none'}, ${wmDesc}, ts+${tsOffset.toFixed(1)}s`,
         )
         log('debug', 'ffmpeg', `Ch ${channelNumber} ffmpeg command`, 'ffmpeg ' + args.join(' '))
+        const segStart = Date.now()
         current = spawn('ffmpeg', args)
         const result = await pipeSegment(current, res)
         current = null
         cursor = item.stopTime
-        // Log ffmpeg trouble (but not the SIGKILL we send on disconnect).
+        // Advance the timestamp clock by the segment's intended output length
+        // (+40ms so rounding never overlaps backwards into the previous one).
+        tsOffset += Math.max(0, segDur) + 0.04
+        // Log the outcome of every segment (bytes, wall time, first-byte delay)
+        // — a slow first byte or zero bytes is the stall a viewer sees as a
+        // freeze/black screen. Skip the SIGKILL we send on disconnect.
         if (!aborted) {
+          const wallS = ((Date.now() - segStart) / 1000).toFixed(1)
+          const mb = (result.bytes / 1e6).toFixed(1)
+          const detail = `${mb} MB in ${wallS}s, first byte ${result.firstByteMs < 0 ? 'never' : result.firstByteMs + 'ms'}, exit ${result.code ?? 'n/a'}`
           if (result.spawnError) {
             log('error', 'ffmpeg', `Channel ${channelNumber}: failed to launch ffmpeg for ${path.basename(seg.filePath)}`, String(result.spawnError))
           } else if (result.code && result.code !== 0) {
-            log('error', 'ffmpeg', `Channel ${channelNumber}: ffmpeg exited ${result.code} on ${path.basename(seg.filePath)}`, result.stderr || '(no stderr)')
-          } else if (result.stderr) {
-            log('warn', 'ffmpeg', `Channel ${channelNumber}: ffmpeg warnings on ${path.basename(seg.filePath)}`, result.stderr)
+            log('error', 'ffmpeg', `Channel ${channelNumber}: ffmpeg exited ${result.code} on ${path.basename(seg.filePath)}`, `${detail}\n${result.stderr || '(no stderr)'}`)
+          } else if (result.bytes === 0) {
+            log('error', 'ffmpeg', `Channel ${channelNumber}: ffmpeg produced NO output for ${path.basename(seg.filePath)} — viewers see a freeze/black`, `${detail}\n${result.stderr || '(no stderr)'}`)
+          } else if (result.firstByteMs > 2500) {
+            log('warn', 'ffmpeg', `Channel ${channelNumber}: slow start (${result.firstByteMs}ms to first byte) on ${path.basename(seg.filePath)} — possible stall`, detail)
+          } else {
+            log('debug', 'ffmpeg', `Channel ${channelNumber}: segment done — ${label}`, `${detail}${result.stderr ? '\n' + result.stderr : ''}`)
           }
         }
       }

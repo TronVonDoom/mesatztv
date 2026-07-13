@@ -24,6 +24,7 @@ settingsRouter.get('/', async (_req, res) => {
   res.json({
     tmdbConfigured: !!key,
     fillerPath: await getSetting('filler_path'),
+    fillerMusicPath: await getSetting('filler_music'),
     watermark: await loadWatermark(),
   })
 })
@@ -55,6 +56,19 @@ settingsRouter.post('/filler', async (req, res) => {
   }
   if (!fs.existsSync(p)) return res.status(400).json({ error: `File not found: ${p}` })
   await setSetting('filler_path', p)
+  res.json({ ok: true, path: p })
+})
+
+// Ambient music played during intermissions (loops under the filler visual).
+// Empty clears it -> the filler clip's own audio (or the generated tone) plays.
+settingsRouter.post('/filler/music', async (req, res) => {
+  const p = String(req.body?.path ?? '').trim()
+  if (!p) {
+    await setSetting('filler_music', null)
+    return res.json({ ok: true, path: null })
+  }
+  if (!fs.existsSync(p)) return res.status(400).json({ error: `File not found: ${p}` })
+  await setSetting('filler_music', p)
   res.json({ ok: true, path: p })
 })
 

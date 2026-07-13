@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { prisma, initDb } from './db.js'
 import { log } from './logs.js'
+import { warmFiller } from './stream.js'
 import { librariesRouter } from './routes/libraries.js'
 import { mediaRouter } from './routes/media.js'
 import { scanRouter } from './routes/scan.js'
@@ -127,6 +128,9 @@ async function boot(): Promise<void> {
     console.log(`ffmpeg available: ${ffmpegAvailable}`)
     log('info', 'system', `MeSatzTV v${VERSION} started — ffmpeg ${ffmpegAvailable ? 'available' : 'NOT available'}`)
   })
+  // Pre-build the default filler in the background so the first intermission
+  // never blocks on generation.
+  if (ffmpegAvailable) warmFiller().catch(() => {})
 }
 
 boot()

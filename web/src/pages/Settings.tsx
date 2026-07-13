@@ -8,7 +8,9 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [fillerPath, setFillerPath] = useState<string | null>(null)
+  const [fillerMusicPath, setFillerMusicPath] = useState<string | null>(null)
   const [provide, setProvide] = useState('')
+  const [music, setMusic] = useState('')
   const [fillerBusy, setFillerBusy] = useState(false)
   const [fillerMsg, setFillerMsg] = useState<string | null>(null)
   const [wm, setWm] = useState<WatermarkConfig | null>(null)
@@ -20,6 +22,7 @@ export default function Settings() {
       .then((s) => {
         setConfigured(s.tmdbConfigured)
         setFillerPath(s.fillerPath)
+        setFillerMusicPath(s.fillerMusicPath)
         setWm(s.watermark)
       })
       .catch(() => {})
@@ -62,6 +65,21 @@ export default function Settings() {
       setFillerMsg('Filler updated. ✅')
     } catch (e) {
       setFillerMsg(e instanceof Error ? e.message : 'Failed to set filler')
+    } finally {
+      setFillerBusy(false)
+    }
+  }
+  async function saveMusic(e: React.FormEvent) {
+    e.preventDefault()
+    setFillerBusy(true)
+    setFillerMsg(null)
+    try {
+      const r = await api.setFillerMusic(music.trim())
+      setFillerMusicPath(r.path)
+      setMusic('')
+      setFillerMsg('Intermission music updated. ✅')
+    } catch (e) {
+      setFillerMsg(e instanceof Error ? e.message : 'Failed to set music')
     } finally {
       setFillerBusy(false)
     }
@@ -181,6 +199,33 @@ export default function Settings() {
             Use file
           </button>
         </form>
+
+        <div className="border-t border-slate-800 mt-4 pt-4">
+          <h3 className="text-sm font-medium mb-1">Intermission music</h3>
+          <p className="text-slate-400 text-xs mb-2">
+            Optional ambient track looped under the filler during gaps (overrides the filler clip's own
+            audio). Point at an audio or video file inside your mounted media.
+          </p>
+          <div className="text-xs mb-2">
+            Current:{' '}
+            {fillerMusicPath ? (
+              <code className="text-emerald-300 break-all">{fillerMusicPath}</code>
+            ) : (
+              <span className="text-slate-500">none (filler's own audio)</span>
+            )}
+          </div>
+          <form onSubmit={saveMusic} className="flex gap-2">
+            <input
+              className="flex-1 min-w-0 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm font-mono focus:border-indigo-500 outline-none"
+              placeholder="/media/music/ambient.mp3 (blank = clear)"
+              value={music}
+              onChange={(e) => setMusic(e.target.value)}
+            />
+            <button type="submit" disabled={fillerBusy} className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-4 py-2 text-sm shrink-0">
+              {fillerMusicPath ? 'Update' : 'Use file'}
+            </button>
+          </form>
+        </div>
       </div>
 
       {wm && (
