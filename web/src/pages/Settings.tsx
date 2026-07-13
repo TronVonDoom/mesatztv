@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, backupUrl, type FillerStyle, type WatermarkConfig } from '../lib/api'
 import WatermarkFields from '../components/WatermarkFields'
+import EncodingProfilesCard from '../components/EncodingProfilesCard'
 
 export default function Settings() {
   const [configured, setConfigured] = useState<boolean | null>(null)
@@ -303,6 +304,8 @@ export default function Settings() {
           </div>
         </form>
       )}
+
+      <EncodingProfilesCard />
 
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
         <h2 className="font-semibold mb-1">Maintenance</h2>

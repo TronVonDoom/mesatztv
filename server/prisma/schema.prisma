@@ -28,6 +28,21 @@ model Setting {
   value String
 }
 
+// A reusable ffmpeg output profile assignable per channel (null on a channel =
+// the built-in default). Human-facing knobs; the stream derives ffmpeg args.
+model EncodingProfile {
+  id           Int       @id @default(autoincrement())
+  name         String
+  width        Int       @default(1280)
+  height       Int       @default(720)
+  fps          Int       @default(30)
+  quality      String    @default("medium") // "low" | "medium" | "high"
+  hwaccel      String    @default("auto") // "auto" | "nvidia" | "cpu"
+  audioBitrate Int       @default(192) // kbps
+  createdAt    DateTime  @default(now())
+  channels     Channel[]
+}
+
 // An uploaded non-logo media asset (ambient audio, custom filler video),
 // managed on the Media page. Files live under the data dir /assets.
 model Asset {
@@ -139,6 +154,9 @@ model Channel {
   logoUrl       String? // legacy free-form logo URL (fallback)
   logo          Logo?          @relation(fields: [logoId], references: [id], onDelete: SetNull)
   logoId        Int?
+  // Output encoding profile (null = built-in default).
+  profile       EncodingProfile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  profileId     Int?
   createdAt     DateTime       @default(now())
   // Playout build state (see playout engine).
   playoutAnchor DateTime?

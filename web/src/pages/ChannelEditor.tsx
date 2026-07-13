@@ -6,6 +6,7 @@ import {
   minutesToTime,
   type ChannelDetail,
   type Collection,
+  type EncodingProfile,
   type Playout,
 } from '../lib/api'
 import CollectionManager from '../components/CollectionManager'
@@ -49,7 +50,8 @@ export default function ChannelEditor() {
   const [error, setError] = useState<string | null>(null)
   const [building, setBuilding] = useState(false)
 
-  const [chForm, setChForm] = useState<{ name: string; group: string; logoUrl: string; logoId: number | null }>({ name: '', group: '', logoUrl: '', logoId: null })
+  const [profiles, setProfiles] = useState<EncodingProfile[]>([])
+  const [chForm, setChForm] = useState<{ name: string; group: string; logoUrl: string; logoId: number | null; profileId: number | null }>({ name: '', group: '', logoUrl: '', logoId: null, profileId: null })
   const [rot, setRot] = useState({ collectionId: '', mode: 'one', count: '1', playbackOrder: 'chronological' })
   const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; logoId: number | null; fillerMode: string }>({
     collectionId: '',
@@ -72,11 +74,12 @@ export default function ChannelEditor() {
       .channel(channelId)
       .then((c) => {
         setCh(c)
-        setChForm({ name: c.name, group: c.group ?? '', logoUrl: c.logoUrl ?? '', logoId: c.logoId ?? null })
+        setChForm({ name: c.name, group: c.group ?? '', logoUrl: c.logoUrl ?? '', logoId: c.logoId ?? null, profileId: c.profileId ?? null })
       })
       .catch(() => {})
     loadPlayout()
     loadCols()
+    api.profiles().then((r) => setProfiles(r.profiles)).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId])
 
@@ -88,6 +91,7 @@ export default function ChannelEditor() {
         group: chForm.group || null,
         logoUrl: chForm.logoUrl || null,
         logoId: chForm.logoId,
+        profileId: chForm.profileId,
       }),
     )
   }
@@ -208,7 +212,7 @@ export default function ChannelEditor() {
       {/* Channel settings */}
       <form onSubmit={saveSettings} className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mb-6">
         <h2 className="font-semibold mb-3">Channel settings</h2>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_2fr_auto] gap-3 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-slate-400">Name</span>
             <input className={input} value={chForm.name} onChange={(e) => setChForm({ ...chForm, name: e.target.value })} />
@@ -218,13 +222,24 @@ export default function ChannelEditor() {
             <input className={input} placeholder="Entertainment" value={chForm.group} onChange={(e) => setChForm({ ...chForm, group: e.target.value })} />
           </label>
           <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">Encoding profile</span>
+            <select className={input} value={chForm.profileId ?? ''} onChange={(e) => setChForm({ ...chForm, profileId: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">Default (built-in)</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <label className="flex flex-col gap-1 text-sm flex-1 min-w-56">
             <span className="text-slate-400">Logo</span>
             <LogoPicker value={chForm.logoId} onChange={(id) => setChForm({ ...chForm, logoId: id })} />
           </label>
-          <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-4 py-2 text-sm font-medium">Save</button>
+          <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-5 py-2 text-sm font-medium">Save</button>
         </div>
         <p className="text-xs text-slate-500 mt-2">
-          The channel logo shows in the guide and is the default on-screen watermark; a collection or time block can override it. Manage all images on the <Link to="/media" className="text-indigo-300">Media</Link> page.
+          The channel logo shows in the guide and is the default on-screen watermark; a collection or time block can override it. Create encoding profiles under <Link to="/settings" className="text-indigo-300">Settings</Link>.
         </p>
       </form>
 

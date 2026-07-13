@@ -10,11 +10,58 @@ import { buildPlayout, prunePlayout } from './playout.js'
 import { dataDir, logosDir } from './paths.js'
 import { log } from './logs.js'
 
-// Normalized output format — every item is transcoded to these exact params so
-// the concatenated MPEG-TS is a single continuous, seamless stream.
+// Fixed canvas for generated filler clips (playback scales them to the channel's
+// profile, so filler needn't match the channel resolution).
 const W = 1280
 const H = 720
 const FPS = 30
+
+// Resolved per-channel output settings the stream pipeline builds ffmpeg from.
+export type StreamProfile = {
+  width: number
+  height: number
+  fps: number
+  quality: 'low' | 'medium' | 'high'
+  hwaccel: 'auto' | 'nvidia' | 'cpu'
+  audioBitrate: number // kbps
+}
+export const DEFAULT_PROFILE: StreamProfile = {
+  width: 1280,
+  height: 720,
+  fps: 30,
+  quality: 'medium',
+  hwaccel: 'auto',
+  audioBitrate: 192,
+}
+
+type ProfileRow = {
+  width: number
+  height: number
+  fps: number
+  quality: string
+  hwaccel: string
+  audioBitrate: number
+} | null
+
+/** Clamp a DB profile row (or null) into a valid StreamProfile. */
+export function resolveProfile(p: ProfileRow): StreamProfile {
+  if (!p) return DEFAULT_PROFILE
+  const quality = ['low', 'medium', 'high'].includes(p.quality) ? (p.quality as StreamProfile['quality']) : 'medium'
+  const hwaccel = ['auto', 'nvidia', 'cpu'].includes(p.hwaccel) ? (p.hwaccel as StreamProfile['hwaccel']) : 'auto'
+  // Even dimensions (libx264/yuv420p require it); clamp to sane bounds.
+  const even = (n: number, d: number) => {
+    const v = Math.round(Number(n) || d)
+    return Math.max(160, v - (v % 2))
+  }
+  return {
+    width: even(p.width, 1280),
+    height: even(p.height, 720),
+    fps: Math.max(1, Math.min(120, Math.round(Number(p.fps) || 30))),
+    quality,
+    hwaccel,
+    audioBitrate: Math.max(32, Math.min(512, Math.round(Number(p.audioBitrate) || 192))),
+  }
+}
 
 export type WatermarkConfig = {
   mode: 'permanent' | 'intermittent' | 'none'
@@ -100,11 +147,34 @@ function detectEncoder(): Promise<string> {
   })
 }
 
-function encoderArgs(enc: string): string[] {
-  if (enc === 'h264_nvenc') {
-    return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', '5M', '-maxrate', '8M', '-bufsize', '10M', '-g', String(FPS * 2), '-pix_fmt', 'yuv420p']
+/** Pick the actual encoder given the profile's hardware-accel choice. */
+async function resolveEncoder(hwaccel: StreamProfile['hwaccel']): Promise<string> {
+  if (hwaccel === 'cpu') return 'libx264'
+  const avail = await detectEncoder()
+  if (hwaccel === 'nvidia') {
+    if (avail !== 'h264_nvenc') log('warn', 'ffmpeg', 'Profile requests NVIDIA but nvenc is unavailable — using CPU (libx264)')
+    return avail
   }
-  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-maxrate', '8M', '-bufsize', '12M', '-g', String(FPS * 2), '-pix_fmt', 'yuv420p']
+  return avail // auto
+}
+
+// Video quality → bitrate ladder (nvenc VBR) / CRF (libx264), scaled a bit by
+// resolution so 1080p isn't starved at the same numbers as 720p.
+const QUALITY = {
+  low: { bitrate: 2.5, crf: '26' },
+  medium: { bitrate: 5, crf: '23' },
+  high: { bitrate: 8, crf: '20' },
+} as const
+
+function encoderArgs(enc: string, p: StreamProfile): string[] {
+  const g = String(Math.max(2, p.fps * 2))
+  const q = QUALITY[p.quality]
+  const scale = (p.width * p.height) / (1280 * 720) // relative to 720p
+  const mbps = (n: number) => `${(Math.max(0.5, n) * Math.max(1, Math.min(2.5, scale))).toFixed(1)}M`
+  if (enc === 'h264_nvenc') {
+    return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', mbps(q.bitrate), '-maxrate', mbps(q.bitrate * 1.6), '-bufsize', mbps(q.bitrate * 2), '-g', g, '-pix_fmt', 'yuv420p']
+  }
+  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', q.crf, '-maxrate', mbps(q.bitrate * 1.6), '-bufsize', mbps(q.bitrate * 2.4), '-g', g, '-pix_fmt', 'yuv420p']
 }
 
 type Segment = {
@@ -125,20 +195,20 @@ type Segment = {
 // aspect-preserving fit (pillar/letterbox). Used to constrain the watermark to
 // the media. When not constraining, this is the whole canvas.
 type Rect = { x0: number; y0: number; mw: number; mh: number }
-function mediaRect(mediaW: number, mediaH: number, constrain: boolean): Rect {
-  if (!constrain || !mediaW || !mediaH) return { x0: 0, y0: 0, mw: W, mh: H }
+function mediaRect(mediaW: number, mediaH: number, constrain: boolean, cw: number, ch: number): Rect {
+  if (!constrain || !mediaW || !mediaH) return { x0: 0, y0: 0, mw: cw, mh: ch }
   const ar = mediaW / mediaH
-  const canvasAR = W / H
+  const canvasAR = cw / ch
   let mw: number
   let mh: number
   if (ar >= canvasAR) {
-    mw = W
-    mh = Math.round(W / ar)
+    mw = cw
+    mh = Math.round(cw / ar)
   } else {
-    mh = H
-    mw = Math.round(H * ar)
+    mh = ch
+    mw = Math.round(ch * ar)
   }
-  return { x0: Math.round((W - mw) / 2), y0: Math.round((H - mh) / 2), mw, mh }
+  return { x0: Math.round((cw - mw) / 2), y0: Math.round((ch - mh) / 2), mw, mh }
 }
 
 // Build the logo scale + opacity chain, overlay position, and (for intermittent
@@ -182,7 +252,7 @@ function watermarkGraph(
   return { logoChain, overlayPos, overlayExtra }
 }
 
-function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
+function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamProfile): string[] {
   const useWatermark = wm.mode !== 'none' && !!seg.logo
   const a: string[] = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-fflags', '+genpts']
   if (seg.offsetSec > 0.1) a.push('-ss', seg.offsetSec.toFixed(3))
@@ -208,12 +278,12 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
   if (seg.durationSec) a.push('-t', seg.durationSec.toFixed(3))
 
   // De-anamorphize (scale=iw*sar:ih) so non-square-pixel sources (e.g. 720x480
-  // DVD content) aren't horizontally stretched, then fit+letterbox to 1280x720.
-  // Reset per-segment timestamps so concatenated segments stay in sync.
-  const base = `[0:v]scale=iw*sar:ih,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,setpts=PTS-STARTPTS`
+  // DVD content) aren't horizontally stretched, then fit+letterbox to the profile
+  // resolution. Reset per-segment timestamps so concatenated segments stay in sync.
+  const base = `[0:v]scale=iw*sar:ih,scale=${p.width}:${p.height}:force_original_aspect_ratio=decrease,pad=${p.width}:${p.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${p.fps},format=yuv420p,setpts=PTS-STARTPTS`
   let vf: string
   if (useWatermark) {
-    const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, wm.constrainToMedia)
+    const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, wm.constrainToMedia, p.width, p.height)
     const wg = watermarkGraph(wm, logoIdx, seg.wmEpochSec, rect)
     vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}${wg.overlayExtra}[v]`
   } else {
@@ -223,8 +293,8 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
   const af = `[${aIn}]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a]`
 
   a.push('-filter_complex', `${vf};${af}`, '-map', '[v]', '-map', '[a]')
-  a.push(...encoderArgs(enc))
-  a.push('-c:a', 'aac', '-ar', '48000', '-ac', '2', '-b:a', '192k')
+  a.push(...encoderArgs(enc, p))
+  a.push('-c:a', 'aac', '-ar', '48000', '-ac', '2', '-b:a', `${p.audioBitrate}k`)
   // Continuous timestamps: each segment's frames start at 0 (setpts above), and
   // -output_ts_offset shifts them to follow the previous segment so the muxed
   // MPEG-TS never jumps backwards. Backwards PTS at a boundary is what makes
@@ -546,7 +616,7 @@ const viewers = new Map<number, number>()
 export async function streamChannel(channelNumber: number, res: Response, req?: Request): Promise<void> {
   const channel = await prisma.channel.findFirst({
     where: { number: channelNumber },
-    include: { timeBlocks: true, rotationItems: true },
+    include: { timeBlocks: true, rotationItems: true, profile: true },
   })
   if (!channel) {
     log('warn', 'stream', `Rejected stream: channel ${channelNumber} not found (${clientInfo(req)})`)
@@ -581,7 +651,9 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
     clientInfo(req),
   )
 
-  const enc = await detectEncoder()
+  const profile = resolveProfile(channel.profile)
+  const enc = await resolveEncoder(profile.hwaccel)
+  log('debug', 'ffmpeg', `Channel ${channelNumber}: ${profile.width}x${profile.height}@${profile.fps} ${profile.quality} audio ${profile.audioBitrate}k, encoder ${enc}`)
   const defaultWm = await loadWatermark()
   const fillerMusic = await getFillerMusic()
   const logos = await prisma.logo.findMany()
@@ -688,7 +760,7 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
           cursor = item.stopTime
           continue
         }
-        const args = ffmpegArgs(seg, enc, wm)
+        const args = ffmpegArgs(seg, enc, wm, profile)
         let wmDesc: string
         if (wm.mode === 'none' || !logo) {
           wmDesc = 'no watermark'

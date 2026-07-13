@@ -86,12 +86,13 @@ channelsRouter.get('/:id', async (req, res) => {
 
 channelsRouter.patch('/:id', async (req, res) => {
   const id = Number(req.params.id)
-  const { name, group, logoUrl, number, logoId } = req.body ?? {}
-  const data: { name?: string; group?: string | null; logoUrl?: string | null; number?: number | null; logoId?: number | null } = {}
+  const { name, group, logoUrl, number, logoId, profileId } = req.body ?? {}
+  const data: { name?: string; group?: string | null; logoUrl?: string | null; number?: number | null; logoId?: number | null; profileId?: number | null } = {}
   if (name !== undefined) data.name = String(name).trim()
   if (group !== undefined) data.group = group || null
   if (logoUrl !== undefined) data.logoUrl = logoUrl || null
   if (logoId !== undefined) data.logoId = logoId ? Number(logoId) : null
+  if (profileId !== undefined) data.profileId = profileId ? Number(profileId) : null
   if (number !== undefined) data.number = number === null || number === '' ? null : Number(number)
   try {
     const c = await prisma.channel.update({ where: { id }, data })

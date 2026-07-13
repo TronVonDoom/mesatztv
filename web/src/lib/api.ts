@@ -248,9 +248,23 @@ export type ChannelDetail = {
   group: string | null
   logoUrl: string | null
   logoId: number | null
+  profileId: number | null
   rotationItems: RotationItem[]
   timeBlocks: TimeBlock[]
 }
+
+export type EncodingProfile = {
+  id: number
+  name: string
+  width: number
+  height: number
+  fps: number
+  quality: 'low' | 'medium' | 'high'
+  hwaccel: 'auto' | 'nvidia' | 'cpu'
+  audioBitrate: number
+}
+export type ProfileFields = Omit<EncodingProfile, 'id' | 'name'>
+export type ProfileInput = { name: string } & ProfileFields
 
 export type PlayoutEntry = {
   id: number
@@ -415,8 +429,14 @@ export const api = {
   addChannel: (data: { number?: number | null; name: string; group?: string | null; logoId?: number | null }) =>
     request<Channel>('/api/channels', { method: 'POST', body: JSON.stringify(data) }),
   channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
-  updateChannel: (id: number, data: { name?: string; group?: string | null; logoUrl?: string | null; logoId?: number | null }) =>
+  updateChannel: (id: number, data: { name?: string; group?: string | null; logoUrl?: string | null; logoId?: number | null; profileId?: number | null }) =>
     request<Channel>(`/api/channels/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  // --- encoding profiles ---
+  profiles: () => request<{ profiles: EncodingProfile[]; default: ProfileFields }>('/api/profiles'),
+  addProfile: (data: ProfileInput) => request<EncodingProfile>('/api/profiles', { method: 'POST', body: JSON.stringify(data) }),
+  updateProfile: (id: number, data: ProfileInput) => request<EncodingProfile>(`/api/profiles/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteProfile: (id: number) => request<void>(`/api/profiles/${id}`, { method: 'DELETE' }),
   logos: () => request<Logo[]>('/api/logos'),
   uploadLogo: (name: string, dataUrl: string) =>
     request<Logo>('/api/logos', { method: 'POST', body: JSON.stringify({ name, dataUrl }) }),
