@@ -16,7 +16,8 @@ scanRouter.post('/:libraryId', async (req, res) => {
   const lib = await prisma.library.findUnique({ where: { id: libraryId } })
   if (!lib) return res.status(404).json({ error: 'Library not found.' })
 
+  const force = req.query.force === '1' || req.query.force === 'true'
   // Fire-and-forget; the client polls GET /api/scan/status for progress.
-  scanLibrary(libraryId).catch(() => {})
+  scanLibrary(libraryId, force).catch(() => {})
   res.status(202).json({ started: true, libraryId })
 })

@@ -163,10 +163,10 @@ export default function Libraries() {
     }
   }
 
-  async function handleScan(id: number) {
+  async function handleScan(id: number, force = false) {
     setError(null)
     try {
-      await api.startScan(id)
+      await api.startScan(id, force)
       startPolling()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start scan')
@@ -360,6 +360,14 @@ export default function Libraries() {
                   className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-40 px-3 py-1.5 text-sm transition-colors"
                 >
                   {scanning ? 'Scanning…' : 'Scan'}
+                </button>
+                <button
+                  onClick={() => handleScan(lib.id, true)}
+                  disabled={busy}
+                  title="Re-probe every file, ignoring the unchanged-file skip"
+                  className="rounded-lg border border-slate-800 text-slate-500 hover:border-amber-500/50 hover:text-amber-300 disabled:opacity-40 px-3 py-1.5 text-sm transition-colors"
+                >
+                  Force
                 </button>
                 {lib.kind !== 'other' && (
                   <button

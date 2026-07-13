@@ -261,8 +261,8 @@ export const api = {
     }),
   removeFolder: (libraryId: number, folderId: number) =>
     request<void>(`/api/libraries/${libraryId}/folders/${folderId}`, { method: 'DELETE' }),
-  startScan: (libraryId: number) =>
-    request<{ started: boolean }>(`/api/scan/${libraryId}`, { method: 'POST' }),
+  startScan: (libraryId: number, force = false) =>
+    request<{ started: boolean }>(`/api/scan/${libraryId}${force ? '?force=1' : ''}`, { method: 'POST' }),
   scanStatus: () => request<ScanStatus>('/api/scan/status'),
   media: (params: {
     page?: number

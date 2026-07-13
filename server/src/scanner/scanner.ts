@@ -82,6 +82,7 @@ async function processFile(
   libraryPath: string,
   kind: LibraryKind,
   cache: DirCache,
+  force: boolean,
 ): Promise<void> {
   status.currentPath = filePath
   const stat = await fs.stat(filePath)
@@ -97,6 +98,7 @@ async function processFile(
 
   // Skip only if the file is unchanged, already probed, and artwork matches.
   if (
+    !force &&
     existing &&
     existing.mtimeMs === mtimeMs &&
     existing.durationSec != null &&
@@ -110,7 +112,7 @@ async function processFile(
   }
 
   // Reuse existing probe results when the file itself hasn't changed.
-  const unchanged = !!existing && existing.mtimeMs === mtimeMs && existing.durationSec != null
+  const unchanged = !force && !!existing && existing.mtimeMs === mtimeMs && existing.durationSec != null
   const probe = unchanged ? null : await ffprobe(filePath)
 
   const data = {
@@ -162,7 +164,7 @@ async function runPool<T>(items: T[], size: number, fn: (item: T) => Promise<voi
  * Scan a single library: index new/changed files and mark vanished files as
  * missing. Runs in the background; progress is exposed via getScanStatus().
  */
-export async function scanLibrary(libraryId: number): Promise<void> {
+export async function scanLibrary(libraryId: number, force = false): Promise<void> {
   const library = await prisma.library.findUnique({
     where: { id: libraryId },
     include: { folders: true },
@@ -197,7 +199,7 @@ export async function scanLibrary(libraryId: number): Promise<void> {
 
     const dirCache: DirCache = new Map()
     await runPool(found, PROBE_CONCURRENCY, ({ file, root }) =>
-      processFile(file, library.id, root, library.kind as LibraryKind, dirCache),
+      processFile(file, library.id, root, library.kind as LibraryKind, dirCache, force),
     )
 
     // Anything in this library not seen in this scan pass is now missing.
