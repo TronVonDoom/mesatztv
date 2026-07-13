@@ -58,6 +58,79 @@ model Season {
   @@unique([showId, number])
 }
 
+// A named, filtered set of media used to program channels.
+model Collection {
+  id           Int            @id @default(autoincrement())
+  name         String
+  libraryId    Int? // limit to one library
+  filterType   String? // "movie" | "episode" | "other"
+  filterShow   String? // exact show title
+  filterSearch String? // title/show contains
+  filterGenre  String? // genre contains
+  createdAt    DateTime       @default(now())
+  rotationItems RotationItem[]
+  timeBlocks   TimeBlock[]
+}
+
+// A virtual TV channel: a rotation (24/7 default) + optional time blocks.
+model Channel {
+  id            Int            @id @default(autoincrement())
+  number        Int            @unique
+  name          String
+  group         String?
+  createdAt     DateTime       @default(now())
+  // Playout build state (see playout engine).
+  playoutAnchor DateTime?
+  playoutCursor DateTime?
+  playoutState  String? // JSON { rotationIndex, positions }
+  rotationItems RotationItem[]
+  timeBlocks    TimeBlock[]
+  playout       PlayoutItem[]
+}
+
+// One step in a channel's 24/7 rotation.
+model RotationItem {
+  id            Int        @id @default(autoincrement())
+  channel       Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channelId     Int
+  order         Int
+  collection    Collection @relation(fields: [collectionId], references: [id])
+  collectionId  Int
+  playbackOrder String     @default("chronological") // "chronological" | "shuffle"
+  mode          String     @default("one") // "one" | "multiple"
+  count         Int        @default(1)
+
+  @@index([channelId])
+}
+
+// A day/time block that overrides the rotation while active.
+model TimeBlock {
+  id            Int        @id @default(autoincrement())
+  channel       Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channelId     Int
+  days          String // CSV of day numbers, Sun=0 .. Sat=6, e.g. "1,2,3,4,5"
+  startMinute   Int // minutes from local midnight
+  endMinute     Int
+  collection    Collection @relation(fields: [collectionId], references: [id])
+  collectionId  Int
+  playbackOrder String     @default("chronological")
+
+  @@index([channelId])
+}
+
+// A single scheduled program on a channel's timeline.
+model PlayoutItem {
+  id          Int       @id @default(autoincrement())
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channelId   Int
+  mediaItem   MediaItem @relation(fields: [mediaItemId], references: [id], onDelete: Cascade)
+  mediaItemId Int
+  startTime   DateTime
+  stopTime    DateTime
+
+  @@index([channelId, startTime])
+}
+
 // One root folder belonging to a library.
 model LibraryFolder {
   id        Int      @id @default(autoincrement())
@@ -103,6 +176,7 @@ model MediaItem {
   missing     Boolean  @default(false)
   addedAt     DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  playouts    PlayoutItem[]
 
   @@index([libraryId])
   @@index([type])

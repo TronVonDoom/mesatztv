@@ -139,6 +139,76 @@ export type ScanStatus = {
   error: string | null
 }
 
+export type Collection = {
+  id: number
+  name: string
+  libraryId: number | null
+  filterType: string | null
+  filterShow: string | null
+  filterSearch: string | null
+  filterGenre: string | null
+  itemCount: number
+}
+
+export type RotationItem = {
+  id: number
+  collectionId: number
+  order: number
+  playbackOrder: string
+  mode: string
+  count: number
+  collection: { id: number; name: string }
+}
+
+export type TimeBlock = {
+  id: number
+  collectionId: number
+  days: string
+  startMinute: number
+  endMinute: number
+  playbackOrder: string
+  collection: { id: number; name: string }
+}
+
+export type Channel = {
+  id: number
+  number: number
+  name: string
+  group: string | null
+  rotationCount: number
+  blockCount: number
+  playoutCount: number
+  playoutCursor: string | null
+}
+
+export type ChannelDetail = {
+  id: number
+  number: number
+  name: string
+  group: string | null
+  rotationItems: RotationItem[]
+  timeBlocks: TimeBlock[]
+}
+
+export type PlayoutEntry = {
+  id: number
+  startTime: string
+  stopTime: string
+  mediaItem: {
+    id: number
+    title: string
+    showTitle: string | null
+    season: number | null
+    episode: number | null
+    type: string
+    durationSec: number | null
+    posterPath: string | null
+    tmdbPosterPath: string | null
+  }
+}
+
+export type Playout = { now: string; items: PlayoutEntry[] }
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -211,6 +281,64 @@ export const api = {
       method: 'POST',
     }),
   metadataStatus: () => request<MetadataStatus>('/api/metadata/status'),
+
+  // --- collections ---
+  collections: () => request<Collection[]>('/api/collections'),
+  addCollection: (data: {
+    name: string
+    libraryId?: number | null
+    filterType?: string | null
+    filterShow?: string | null
+    filterSearch?: string | null
+    filterGenre?: string | null
+  }) => request<Collection>('/api/collections', { method: 'POST', body: JSON.stringify(data) }),
+  deleteCollection: (id: number) =>
+    request<void>(`/api/collections/${id}`, { method: 'DELETE' }),
+  collectionPreview: (id: number) =>
+    request<{ count: number; sample: MediaItem[] }>(`/api/collections/${id}/preview`),
+
+  // --- channels ---
+  channels: () => request<Channel[]>('/api/channels'),
+  addChannel: (data: { number: number; name: string; group?: string | null }) =>
+    request<Channel>('/api/channels', { method: 'POST', body: JSON.stringify(data) }),
+  channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
+  deleteChannel: (id: number) => request<void>(`/api/channels/${id}`, { method: 'DELETE' }),
+  addRotation: (
+    channelId: number,
+    data: { collectionId: number; mode: string; count: number; playbackOrder: string },
+  ) => request<RotationItem>(`/api/channels/${channelId}/rotation`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteRotation: (channelId: number, itemId: number) =>
+    request<void>(`/api/channels/${channelId}/rotation/${itemId}`, { method: 'DELETE' }),
+  addBlock: (
+    channelId: number,
+    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string },
+  ) => request<TimeBlock>(`/api/channels/${channelId}/blocks`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteBlock: (channelId: number, blockId: number) =>
+    request<void>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'DELETE' }),
+  buildPlayout: (channelId: number, hours = 48) =>
+    request<{ built: number }>(`/api/channels/${channelId}/build?hours=${hours}`, { method: 'POST' }),
+  resetPlayout: (channelId: number) =>
+    request<{ ok: boolean }>(`/api/channels/${channelId}/reset`, { method: 'POST' }),
+  playout: (channelId: number, hours = 24) =>
+    request<Playout>(`/api/channels/${channelId}/playout?hours=${hours}`),
+}
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+export function formatDays(csv: string): string {
+  const days = csv.split(',').map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n)).sort()
+  if (days.length === 7) return 'Every day'
+  if (days.join(',') === '1,2,3,4,5') return 'Weekdays'
+  if (days.join(',') === '0,6') return 'Weekends'
+  return days.map((d) => DAY_NAMES[d]).join(', ')
+}
+
+export function minutesToTime(min: number): string {
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  const ampm = h < 12 ? 'AM' : 'PM'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`
 }
 
 // Build a TMDB CDN image URL from a stored path like "/abc.jpg".

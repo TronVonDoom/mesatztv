@@ -7,10 +7,10 @@ plugs straight into Plex, Jellyfin, Emby, or any IPTV player.
 Inspired by [ErsatzTV](https://ersatztv.org/), built to be simple to run and
 easy to update on Unraid.
 
-> **Status:** Milestone 2 — data + media indexing. The app scans your library
-> with ffprobe, parses Plex-style names, and lets you browse it Plex-style
-> (library → shows → seasons → episodes; movies with detail). Runs on Unraid via
-> a template with NVIDIA GPU passthrough. Scheduling & streaming come next.
+> **Status:** Milestone 3 — channels & scheduling. On top of the scanned,
+> TMDB-enriched, Plex-style library you can now build **collections**, define
+> **channels** with a 24/7 rotation plus optional day/time blocks, and generate a
+> **playout timeline** (guide). Next: M3U/XMLTV output, then live streaming.
 
 ---
 
@@ -178,11 +178,29 @@ Volumes:
    Re-scanning is incremental — unchanged files are skipped, files that
    disappeared are flagged missing.
 
+## Channels & scheduling (Milestone 3)
+
+1. **Collections** — create named, filtered sets of media (by library, type,
+   exact show, title search, or genre). e.g. a "Futurama" collection, a
+   "Bumpers" collection.
+2. **Channels** — give it a number + name. Open it to edit:
+   - **Rotation** — an ordered list of collections that loops 24/7. Each item
+     plays 1 or N items, in order or shuffled.
+   - **Time blocks** — optional day/time overrides (e.g. *Weekdays 6–9pm →
+     Cartoons*). While a block is active it plays instead of the rotation;
+     programs play fully, so blocks switch at program boundaries.
+3. **Build** the guide to generate the playout timeline and preview what's on.
+   The timeline is gapless and shows continue in order across loops and days.
+
+This playout is the foundation for the M3U/XMLTV guide (M4) and the live
+stream (M5).
+
 ## Roadmap
 
 - [x] **M1 — Deploy loop:** repo, Docker, web UI, GitHub → Unraid update flow
-- [x] **M2 — Data + media indexing:** SQLite/Prisma, scan library, build metadata
-- [ ] **M3 — Channels & scheduler:** define blocks by day/time, collections
+- [x] **M2 — Data + media indexing:** SQLite/Prisma, scan library, TMDB metadata
+- [x] **M3 — Channels & scheduler:** collections, 24/7 rotation + day/time blocks,
+      hybrid playout engine, guide preview
 - [ ] **M4 — Guide output:** M3U playlist + XMLTV EPG generation
 - [ ] **M5 — Streaming pipeline:** continuous ffmpeg stream, seamless transitions
 - [ ] **M6 — Bumpers, filler & overlays:** interstitials + scheduled watermarks
