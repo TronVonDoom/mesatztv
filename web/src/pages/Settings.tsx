@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, type WatermarkConfig } from '../lib/api'
+import { api, backupUrl, type WatermarkConfig } from '../lib/api'
 import WatermarkFields from '../components/WatermarkFields'
 
 export default function Settings() {
@@ -15,6 +15,9 @@ export default function Settings() {
   const [fillerMsg, setFillerMsg] = useState<string | null>(null)
   const [wm, setWm] = useState<WatermarkConfig | null>(null)
   const [wmMsg, setWmMsg] = useState<string | null>(null)
+  const [wipeAssets, setWipeAssets] = useState(true)
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetMsg, setResetMsg] = useState<string | null>(null)
 
   useEffect(() => {
     api
@@ -82,6 +85,20 @@ export default function Settings() {
       setFillerMsg(e instanceof Error ? e.message : 'Failed to set music')
     } finally {
       setFillerBusy(false)
+    }
+  }
+
+  async function resetInstance() {
+    if (!confirm('Wipe ALL libraries, channels, collections, logos and settings back to a clean slate? This cannot be undone — back up first.')) return
+    setResetBusy(true)
+    setResetMsg(null)
+    try {
+      await api.resetInstance(wipeAssets)
+      setResetMsg('Instance reset. Reloading…')
+      setTimeout(() => window.location.reload(), 1200)
+    } catch (e) {
+      setResetMsg(e instanceof Error ? e.message : 'Reset failed')
+      setResetBusy(false)
     }
   }
 
@@ -234,7 +251,7 @@ export default function Settings() {
           <p className="text-slate-400 text-sm mb-4">
             The fallback watermark for logos without their own settings (and legacy URL logos). Set
             per-logo overrides on the <span className="text-slate-300">Logos</span> page. Intermittent
-            mode fades the logo in when it appears and out when its time is up.
+            mode shows the logo for the set duration every so many minutes, aligned to wall-clock time.
           </p>
           {wmMsg && <div className="text-sm text-emerald-300 mb-3">{wmMsg}</div>}
           <WatermarkFields wm={wm} onChange={setWm} />
@@ -243,6 +260,34 @@ export default function Settings() {
           </div>
         </form>
       )}
+
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
+        <h2 className="font-semibold mb-1">Maintenance</h2>
+        <p className="text-slate-400 text-sm mb-4">
+          Back up your data (database + logos + filler) before experimenting, or reset to a clean slate
+          for a fresh start.
+        </p>
+        {resetMsg && <div className="text-sm text-amber-300 mb-3">{resetMsg}</div>}
+        <div className="flex flex-wrap items-center gap-3">
+          <a
+            href={backupUrl}
+            className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-4 py-2 text-sm"
+          >
+            Download backup (.tar.gz)
+          </a>
+          <label className="flex items-center gap-2 text-sm text-slate-400 select-none">
+            <input type="checkbox" checked={wipeAssets} onChange={(e) => setWipeAssets(e.target.checked)} />
+            Also delete uploaded logos &amp; filler
+          </label>
+          <button
+            onClick={resetInstance}
+            disabled={resetBusy}
+            className="rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 px-4 py-2 text-sm ml-auto"
+          >
+            {resetBusy ? 'Resetting…' : 'Reset to clean slate'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

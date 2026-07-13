@@ -55,7 +55,9 @@ logosRouter.get('/:id/image', async (req, res) => {
   if (!logo) return res.status(404).end()
   const file = path.join(logosDir(), logo.filename)
   if (!fs.existsSync(file)) return res.status(404).end()
-  res.setHeader('Cache-Control', 'public, max-age=86400')
+  // Short cache so a swapped logo shows up promptly (was 24h, which made the
+  // guide/UI appear "stuck" on the old image).
+  res.setHeader('Cache-Control', 'public, max-age=60')
   res.type(logo.mime)
   res.sendFile(file)
 })

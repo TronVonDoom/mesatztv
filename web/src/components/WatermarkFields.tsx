@@ -59,10 +59,6 @@ export default function WatermarkFields({
               <span className="text-slate-400">Duration (sec)</span>
               <input type="number" min={1} className={inp} value={wm.durationSeconds} onChange={(e) => set('durationSeconds', Number(e.target.value))} />
             </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-slate-400">Fade (sec)</span>
-              <input type="number" min={0} className={inp} value={wm.fadeSeconds} onChange={(e) => set('fadeSeconds', Number(e.target.value))} />
-            </label>
           </>
         )}
       </div>

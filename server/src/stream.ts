@@ -114,7 +114,7 @@ type Segment = {
   loop: boolean // loop the input (filler)
   hasAudio: boolean
   logo?: string // logo file path or http url
-  phaseFrames: number // intermittent watermark phase (for cross-segment continuity)
+  wmEpochSec: number // segment's absolute start time (s) — aligns intermittent watermark to wall clock
   mediaWidth: number // source pixel dims (for constrain-to-media watermark)
   mediaHeight: number
   musicPath?: string // looped ambient audio (filler only) — overrides clip audio
@@ -141,8 +141,17 @@ function mediaRect(mediaW: number, mediaH: number, constrain: boolean): Rect {
   return { x0: Math.round((W - mw) / 2), y0: Math.round((H - mh) / 2), mw, mh }
 }
 
-// Build the logo scale + opacity chain and overlay position for a watermark.
-function watermarkGraph(wm: WatermarkConfig, logoIdx: number, phaseFrames: number, rect: Rect): { logoChain: string; overlayPos: string } {
+// Build the logo scale + opacity chain, overlay position, and (for intermittent
+// mode) a timeline `enable` expression that shows the logo for `durationSeconds`
+// every `frequencyMinutes`, aligned to wall-clock time so every viewer sees it
+// at the same moment. `wmEpochSec` is the segment's absolute start time in
+// seconds; `t` inside the expression is the segment-relative time.
+function watermarkGraph(
+  wm: WatermarkConfig,
+  logoIdx: number,
+  wmEpochSec: number,
+  rect: Rect,
+): { logoChain: string; overlayPos: string; overlayExtra: string } {
   const LW = Math.max(2, Math.round((rect.mw * wm.widthPercent) / 100))
   const MX = Math.round((rect.mw * wm.horizontalMarginPercent) / 100)
   const MY = Math.round((rect.mh * wm.verticalMarginPercent) / 100)
@@ -159,19 +168,18 @@ function watermarkGraph(wm: WatermarkConfig, logoIdx: number, phaseFrames: numbe
   const overlayPos = positions[wm.position] ?? positions['bottom-right']
   const BO = Math.max(0, Math.min(1, wm.opacityPercent / 100)).toFixed(3)
 
-  let logoChain: string
+  // Static alpha via colorchannelmixer — reliable on all builds (unlike geq,
+  // which needs planar RGBA and silently mangles packed formats).
+  const logoChain = `[${logoIdx}:v]scale=${LW}:-2,format=rgba,colorchannelmixer=aa=${BO}[lg]`
+
+  let overlayExtra = ''
   if (wm.mode === 'intermittent') {
-    // geq's frame-number N is periodic; T is unreliable in some builds.
-    const Pf = Math.max(1, Math.round(wm.frequencyMinutes * 60 * FPS))
-    const Df = Math.max(1, Math.round(wm.durationSeconds * FPS))
-    const Ff = Math.max(1, Math.round(wm.fadeSeconds * FPS))
-    const c = `mod(N+${phaseFrames},${Pf})`
-    const vis = `clip(min(min(${c}/${Ff},(${Df}-${c})/${Ff}),1),0,1)`
-    logoChain = `[${logoIdx}:v]scale=${LW}:-2,fps=${FPS},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${BO}*${vis}'[lg]`
-  } else {
-    logoChain = `[${logoIdx}:v]scale=${LW}:-2,format=rgba,colorchannelmixer=aa=${BO}[lg]`
+    const P = Math.max(1, Math.round(wm.frequencyMinutes * 60)) // period, seconds
+    const D = Math.max(1, Math.round(wm.durationSeconds)) // visible window, seconds
+    // Single-quoted so the commas aren't parsed as filtergraph separators.
+    overlayExtra = `:enable='lt(mod(t+${wmEpochSec.toFixed(1)},${P}),${D})'`
   }
-  return { logoChain, overlayPos }
+  return { logoChain, overlayPos, overlayExtra }
 }
 
 function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
@@ -206,8 +214,8 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
   let vf: string
   if (useWatermark) {
     const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, wm.constrainToMedia)
-    const wg = watermarkGraph(wm, logoIdx, seg.phaseFrames, rect)
-    vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}[v]`
+    const wg = watermarkGraph(wm, logoIdx, seg.wmEpochSec, rect)
+    vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}${wg.overlayExtra}[v]`
   } else {
     vf = `${base}[v]`
   }
@@ -536,11 +544,15 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
         const logo = await localLogo(active.raw)
         // Per-logo watermark settings, else the global default.
         const wm = active.id != null ? logoWm.get(active.id) ?? defaultWm : defaultWm
-        const periodFrames = Math.max(1, Math.round(wm.frequencyMinutes * 60 * FPS))
         const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
         first = false
         const mi = item.mediaItem
-        const phaseFrames = Math.round((item.startTime.getTime() / 1000) * FPS) % periodFrames
+        // Absolute wall-clock start of the frames we're about to emit — anchors
+        // the intermittent watermark so it fires on schedule for every viewer.
+        const wmEpochSec = item.startTime.getTime() / 1000 + offset
+        // Cap every segment to its scheduled slot so output timestamps stay
+        // exactly continuous (a program overrunning its probed duration is what
+        // could otherwise push the next segment's PTS backwards → a freeze).
         const segDur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
         let seg: Segment | null = null
         let label: string
@@ -550,11 +562,11 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
           const fp = await getFillerClip()
           const genMs = Date.now() - genStart
           if (genMs > 500) log('warn', 'system', `Channel ${channelNumber}: filler clip resolve blocked ${genMs}ms (should be pre-warmed)`)
-          if (fp && segDur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, phaseFrames, mediaWidth: W, mediaHeight: H, musicPath: fillerMusic, tsOffsetSec: tsOffset }
+          if (fp && segDur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, wmEpochSec, mediaWidth: W, mediaHeight: H, musicPath: fillerMusic, tsOffsetSec: tsOffset }
           label = `filler (${Math.round(segDur)}s)${fillerMusic ? ' +music' : ''}`
           if (!fp) log('error', 'stream', `Channel ${channelNumber}: no filler clip — a ${Math.round(segDur)}s gap will play black`)
         } else if (fs.existsSync(mi.path)) {
-          seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames, mediaWidth: mi.width ?? W, mediaHeight: mi.height ?? H, tsOffsetSec: tsOffset }
+          seg = { filePath: mi.path, offsetSec: offset, loop: false, durationSec: segDur, hasAudio: !!mi.audioCodec, logo, wmEpochSec, mediaWidth: mi.width ?? W, mediaHeight: mi.height ?? H, tsOffsetSec: tsOffset }
           label = mi.showTitle
             ? `${mi.showTitle}${mi.season != null && mi.episode != null ? ` S${String(mi.season).padStart(2, '0')}E${String(mi.episode).padStart(2, '0')}` : ''}${mi.title ? ` — ${mi.title}` : ''}`
             : mi.title
@@ -568,7 +580,19 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
           continue
         }
         const args = ffmpegArgs(seg, enc, wm)
-        const wmDesc = wm.mode === 'none' || !logo ? 'no watermark' : `watermark ${wm.mode}/${wm.position}${wm.constrainToMedia ? '/media-fit' : ''}`
+        let wmDesc: string
+        if (wm.mode === 'none' || !logo) {
+          wmDesc = 'no watermark'
+        } else if (wm.mode === 'intermittent') {
+          // Where we are in the show/hide cycle right now, so the log makes it
+          // obvious when to expect the logo (and confirms it's scheduled).
+          const P = Math.max(1, Math.round(wm.frequencyMinutes * 60))
+          const phase = Math.round(wmEpochSec) % P
+          const untilOn = phase < wm.durationSeconds ? 0 : P - phase
+          wmDesc = `watermark intermittent/${wm.position}${wm.constrainToMedia ? '/media-fit' : ''} — ${wm.durationSeconds}s every ${wm.frequencyMinutes}min, ${untilOn === 0 ? 'visible now' : 'next in ' + untilOn + 's'}`
+        } else {
+          wmDesc = `watermark ${wm.mode}/${wm.position}${wm.constrainToMedia ? '/media-fit' : ''}`
+        }
         log(
           'info',
           'stream',
@@ -588,9 +612,10 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
         // — a slow first byte or zero bytes is the stall a viewer sees as a
         // freeze/black screen. Skip the SIGKILL we send on disconnect.
         if (!aborted) {
-          const wallS = ((Date.now() - segStart) / 1000).toFixed(1)
+          const wallMs = Date.now() - segStart
+          const wallS = (wallMs / 1000).toFixed(1)
           const mb = (result.bytes / 1e6).toFixed(1)
-          const detail = `${mb} MB in ${wallS}s, first byte ${result.firstByteMs < 0 ? 'never' : result.firstByteMs + 'ms'}, exit ${result.code ?? 'n/a'}`
+          const detail = `${mb} MB in ${wallS}s (expected ~${Math.round(segDur)}s), first byte ${result.firstByteMs < 0 ? 'never' : result.firstByteMs + 'ms'}, exit ${result.code ?? 'n/a'}`
           if (result.spawnError) {
             log('error', 'ffmpeg', `Channel ${channelNumber}: failed to launch ffmpeg for ${path.basename(seg.filePath)}`, String(result.spawnError))
           } else if (result.code && result.code !== 0) {
@@ -599,6 +624,10 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
             log('error', 'ffmpeg', `Channel ${channelNumber}: ffmpeg produced NO output for ${path.basename(seg.filePath)} — viewers see a freeze/black`, `${detail}\n${result.stderr || '(no stderr)'}`)
           } else if (result.firstByteMs > 2500) {
             log('warn', 'ffmpeg', `Channel ${channelNumber}: slow start (${result.firstByteMs}ms to first byte) on ${path.basename(seg.filePath)} — possible stall`, detail)
+          } else if (segDur > 5 && wallMs > (segDur + 3) * 1000 * 1.15) {
+            // Took much longer than real time → the encoder can't sustain the
+            // stream, so viewers' buffers underrun and it freezes/stutters.
+            log('warn', 'ffmpeg', `Channel ${channelNumber}: encoder slower than real-time (${wallS}s for a ${Math.round(segDur)}s segment, ${enc}) — likely cause of freezing`, detail)
           } else {
             log('debug', 'ffmpeg', `Channel ${channelNumber}: segment done — ${label}`, `${detail}${result.stderr ? '\n' + result.stderr : ''}`)
           }

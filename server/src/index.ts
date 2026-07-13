@@ -18,6 +18,7 @@ import { channelsRouter } from './routes/channels.js'
 import { iptvRouter } from './routes/iptv.js'
 import { logosRouter } from './routes/logos.js'
 import { logsRouter } from './routes/logs.js'
+import { adminRouter } from './routes/admin.js'
 
 const app = express()
 const PORT = Number(process.env.PORT ?? 8688)
@@ -91,6 +92,7 @@ app.use('/api/collections', collectionsRouter)
 app.use('/api/channels', channelsRouter)
 app.use('/api/logos', logosRouter)
 app.use('/api/logs', logsRouter)
+app.use('/api/admin', adminRouter)
 app.use('/iptv', iptvRouter)
 
 // --- Static frontend (production only) --------------------------------------

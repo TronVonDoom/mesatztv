@@ -435,9 +435,14 @@ export const api = {
     return request<LogsResponse>(`/api/logs${q ? `?${q}` : ''}`)
   },
   clearLogs: () => request<void>('/api/logs', { method: 'DELETE' }),
+
+  // --- admin / maintenance ---
+  resetInstance: (assets: boolean) =>
+    request<{ ok: boolean }>('/api/admin/reset', { method: 'POST', body: JSON.stringify({ confirm: 'RESET', assets }) }),
 }
 
 export const logsDownloadUrl = '/api/logs/download'
+export const backupUrl = '/api/admin/backup'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
