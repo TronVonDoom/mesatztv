@@ -14,6 +14,40 @@ const W = 1280
 const H = 720
 const FPS = 30
 
+export type WatermarkConfig = {
+  mode: 'permanent' | 'intermittent' | 'none'
+  position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+  widthPercent: number
+  horizontalMarginPercent: number
+  verticalMarginPercent: number
+  opacityPercent: number
+  frequencyMinutes: number
+  durationSeconds: number
+  fadeSeconds: number
+}
+
+export const DEFAULT_WATERMARK: WatermarkConfig = {
+  mode: 'permanent',
+  position: 'bottom-right',
+  widthPercent: 10,
+  horizontalMarginPercent: 4,
+  verticalMarginPercent: 4,
+  opacityPercent: 85,
+  frequencyMinutes: 5,
+  durationSeconds: 30,
+  fadeSeconds: 1,
+}
+
+export async function loadWatermark(): Promise<WatermarkConfig> {
+  const s = await prisma.setting.findUnique({ where: { key: 'watermark' } })
+  if (!s?.value) return DEFAULT_WATERMARK
+  try {
+    return { ...DEFAULT_WATERMARK, ...(JSON.parse(s.value) as Partial<WatermarkConfig>) }
+  } catch {
+    return DEFAULT_WATERMARK
+  }
+}
+
 let encoderCache: string | null = null
 
 /** Detect once whether NVIDIA nvenc is available; fall back to libx264. */
@@ -42,23 +76,54 @@ type Segment = {
   loop: boolean // loop the input (filler)
   hasAudio: boolean
   logo?: string // logo file path or http url
+  phaseFrames: number // intermittent watermark phase (for cross-segment continuity)
 }
 
-function ffmpegArgs(seg: Segment, enc: string): string[] {
+// Build the logo scale + opacity chain and overlay position for a watermark.
+function watermarkGraph(wm: WatermarkConfig, logoIdx: number, phaseFrames: number): { logoChain: string; overlayPos: string } {
+  const LW = Math.max(2, Math.round((W * wm.widthPercent) / 100))
+  const MX = Math.round((W * wm.horizontalMarginPercent) / 100)
+  const MY = Math.round((H * wm.verticalMarginPercent) / 100)
+  const positions: Record<string, string> = {
+    'top-left': `${MX}:${MY}`,
+    'top-right': `W-w-${MX}:${MY}`,
+    'bottom-left': `${MX}:H-h-${MY}`,
+    'bottom-right': `W-w-${MX}:H-h-${MY}`,
+  }
+  const overlayPos = positions[wm.position] ?? positions['bottom-right']
+  const BO = Math.max(0, Math.min(1, wm.opacityPercent / 100)).toFixed(3)
+
+  let logoChain: string
+  if (wm.mode === 'intermittent') {
+    // geq's frame-number N is periodic; T is unreliable in some builds.
+    const Pf = Math.max(1, Math.round(wm.frequencyMinutes * 60 * FPS))
+    const Df = Math.max(1, Math.round(wm.durationSeconds * FPS))
+    const Ff = Math.max(1, Math.round(wm.fadeSeconds * FPS))
+    const c = `mod(N+${phaseFrames},${Pf})`
+    const vis = `clip(min(min(${c}/${Ff},(${Df}-${c})/${Ff}),1),0,1)`
+    logoChain = `[${logoIdx}:v]scale=${LW}:-2,fps=${FPS},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${BO}*${vis}'[lg]`
+  } else {
+    logoChain = `[${logoIdx}:v]scale=${LW}:-2,format=rgba,colorchannelmixer=aa=${BO}[lg]`
+  }
+  return { logoChain, overlayPos }
+}
+
+function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig): string[] {
+  const useWatermark = wm.mode !== 'none' && !!seg.logo
   const a: string[] = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-fflags', '+genpts']
   if (seg.offsetSec > 0.1) a.push('-ss', seg.offsetSec.toFixed(3))
   if (seg.loop) a.push('-stream_loop', '-1')
   a.push('-re', '-i', seg.filePath)
 
   let logoIdx = -1
-  if (seg.logo) {
-    a.push('-i', seg.logo)
+  if (useWatermark) {
+    a.push('-i', seg.logo as string)
     logoIdx = 1
   }
   let silentIdx = -1
   if (!seg.hasAudio) {
     a.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo')
-    silentIdx = seg.logo ? 2 : 1
+    silentIdx = useWatermark ? 2 : 1
   }
   if (seg.durationSec) a.push('-t', seg.durationSec.toFixed(3))
 
@@ -66,10 +131,13 @@ function ffmpegArgs(seg: Segment, enc: string): string[] {
   // DVD content) aren't horizontally stretched, then fit+letterbox to 1280x720.
   // Reset per-segment timestamps so concatenated segments stay in sync.
   const base = `[0:v]scale=iw*sar:ih,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,setpts=PTS-STARTPTS`
-  const vf =
-    logoIdx >= 0
-      ? `${base}[bg];[${logoIdx}:v]scale=-2:64[lg];[bg][lg]overlay=W-w-32:24[v]`
-      : `${base}[v]`
+  let vf: string
+  if (useWatermark) {
+    const wg = watermarkGraph(wm, logoIdx, seg.phaseFrames)
+    vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}[v]`
+  } else {
+    vf = `${base}[v]`
+  }
   const aIn = seg.hasAudio ? '0:a:0' : `${silentIdx}:a:0`
   const af = `[${aIn}]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a]`
 
@@ -201,6 +269,8 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
   }
 
   const enc = await detectEncoder()
+  const wm = await loadWatermark()
+  const periodFrames = Math.max(1, Math.round(wm.frequencyMinutes * 60 * FPS))
 
   res.writeHead(200, {
     'Content-Type': 'video/mp2t',
@@ -237,21 +307,22 @@ export async function streamChannel(channelNumber: number, res: Response): Promi
       const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
       first = false
       const mi = item.mediaItem
+      const phaseFrames = Math.round((item.startTime.getTime() / 1000) * FPS) % periodFrames
       let seg: Segment | null = null
 
       if (item.kind === 'filler' || !mi) {
         const fp = await getFillerClip()
         const dur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000 - offset
-        if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo }
+        if (fp && dur > 0.3) seg = { filePath: fp, offsetSec: 0, loop: true, durationSec: dur, hasAudio: true, logo, phaseFrames }
       } else if (fs.existsSync(mi.path)) {
-        seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo }
+        seg = { filePath: mi.path, offsetSec: offset, loop: false, hasAudio: !!mi.audioCodec, logo, phaseFrames }
       }
 
       if (!seg) {
         cursor = item.stopTime
         continue
       }
-      current = spawn('ffmpeg', ffmpegArgs(seg, enc))
+      current = spawn('ffmpeg', ffmpegArgs(seg, enc, wm))
       current.stderr?.on('data', () => {}) // drain stderr
       await pipeSegment(current, res)
       current = null
