@@ -1,8 +1,16 @@
 import { Router } from 'express'
 import type { Request } from 'express'
 import { prisma } from '../db.js'
+import { streamChannel } from '../stream.js'
 
 export const iptvRouter = Router()
+
+// Live stream: GET /iptv/channel/1.ts
+iptvRouter.get(/^\/channel\/(\d+)\.ts$/, (req, res) => {
+  streamChannel(Number((req.params as unknown as string[])[0]), res).catch(() => {
+    if (!res.headersSent) res.status(500).end()
+  })
+})
 
 function baseUrl(req: Request): string {
   const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0] || req.protocol || 'http'

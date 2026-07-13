@@ -203,5 +203,6 @@ stream (M5).
       hybrid playout engine, guide preview
 - [x] **M4 — Guide output:** M3U playlist (`/iptv/channels.m3u`) + XMLTV EPG
       (`/iptv/xmltv.xml`) for Plex/Jellyfin/Threadfin
-- [ ] **M5 — Streaming pipeline:** continuous ffmpeg stream, seamless transitions
+- [x] **M5 — Streaming pipeline:** live MPEG-TS at `/iptv/channel/N.ts` — normalized
+      transcode, per-block logo overlay, NVIDIA nvenc, real-time pacing
 - [ ] **M6 — Bumpers, filler & overlays:** interstitials + scheduled watermarks

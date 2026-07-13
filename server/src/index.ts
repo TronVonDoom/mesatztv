@@ -17,7 +17,7 @@ import { iptvRouter } from './routes/iptv.js'
 
 const app = express()
 const PORT = Number(process.env.PORT ?? 8688)
-const VERSION = process.env.APP_VERSION ?? '0.4.0'
+const VERSION = process.env.APP_VERSION ?? '0.5.0'
 const startedAt = Date.now()
 
 app.use(express.json())
