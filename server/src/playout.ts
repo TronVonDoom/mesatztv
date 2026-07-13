@@ -30,6 +30,23 @@ function skipToBlockEnd(cursor: Date, block: TimeBlock): Date {
   return end
 }
 
+/** The soonest block start strictly after `cursor` and before `until`, or null. */
+function nextBlockStart(blocks: BlockWithCollection[], cursor: Date, until: Date): Date | null {
+  let best: Date | null = null
+  for (let offset = 0; offset <= 7; offset++) {
+    const day = new Date(cursor)
+    day.setDate(day.getDate() + offset)
+    const wd = day.getDay()
+    for (const b of blocks) {
+      if (!b.days.split(',').map((s) => Number(s.trim())).includes(wd)) continue
+      const start = new Date(day)
+      start.setHours(Math.floor(b.startMinute / 60), b.startMinute % 60, 0, 0)
+      if (start > cursor && start < until && (best === null || start < best)) best = start
+    }
+  }
+  return best
+}
+
 /**
  * Build (extend) a channel's playout timeline up to `until`. Rotation fills the
  * timeline 24/7; an active time block overrides it. Programs play fully, so
@@ -115,7 +132,11 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
         state.positions[key] = pos
       }
     } else {
-      break // no rotation and no active block — nothing to schedule
+      // No rotation: this is a blocks-only channel. Jump to the next block
+      // start (dead air in between), or stop if none is coming up.
+      const next = channel.timeBlocks.length ? nextBlockStart(channel.timeBlocks, cursor, until) : null
+      if (next) cursor = next
+      else break
     }
 
     // Break if we're not making progress (all sources empty / zero-duration).

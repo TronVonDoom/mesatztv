@@ -154,8 +154,8 @@ export default function ChannelEditor() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Rotation */}
         <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
-          <h2 className="font-semibold mb-1">Rotation</h2>
-          <p className="text-slate-500 text-xs mb-4">Plays 24/7 in order, looping forever.</p>
+          <h2 className="font-semibold mb-1">Rotation <span className="text-slate-600 font-normal">(optional)</span></h2>
+          <p className="text-slate-500 text-xs mb-4">The 24/7 default — loops forever. Leave empty for a blocks-only channel.</p>
           <div className="space-y-2 mb-4">
             {ch.rotationItems.length === 0 && <div className="text-slate-600 text-sm">No rotation items yet.</div>}
             {ch.rotationItems.map((r, i) => (
@@ -191,8 +191,8 @@ export default function ChannelEditor() {
 
         {/* Time blocks */}
         <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
-          <h2 className="font-semibold mb-1">Time blocks</h2>
-          <p className="text-slate-500 text-xs mb-4">Override the rotation on certain days/times.</p>
+          <h2 className="font-semibold mb-1">Time blocks <span className="text-slate-600 font-normal">(optional)</span></h2>
+          <p className="text-slate-500 text-xs mb-4">Scheduled slots for specific days/times. Override the rotation while active.</p>
           <div className="space-y-2 mb-4">
             {ch.timeBlocks.length === 0 && <div className="text-slate-600 text-sm">No time blocks.</div>}
             {ch.timeBlocks.map((b) => (
@@ -245,17 +245,17 @@ export default function ChannelEditor() {
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <h2 className="font-semibold">Guide preview</h2>
           <div className="flex gap-2">
-            <button onClick={build} disabled={building || ch.rotationItems.length === 0} className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 px-4 py-2 text-sm font-medium">
+            <button onClick={build} disabled={building || (ch.rotationItems.length === 0 && ch.timeBlocks.length === 0)} className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 px-4 py-2 text-sm font-medium">
               {building ? 'Building…' : 'Build 48h'}
             </button>
-            <button onClick={reset} disabled={building || ch.rotationItems.length === 0} className="rounded-lg border border-slate-700 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40 px-4 py-2 text-sm">
+            <button onClick={reset} disabled={building || (ch.rotationItems.length === 0 && ch.timeBlocks.length === 0)} className="rounded-lg border border-slate-700 hover:border-amber-500/60 hover:text-amber-300 disabled:opacity-40 px-4 py-2 text-sm">
               Reset & rebuild
             </button>
           </div>
         </div>
 
-        {ch.rotationItems.length === 0 ? (
-          <div className="text-slate-500 text-sm">Add at least one rotation item, then build the guide.</div>
+        {ch.rotationItems.length === 0 && ch.timeBlocks.length === 0 ? (
+          <div className="text-slate-500 text-sm">Add a rotation item or a time block, then build the guide.</div>
         ) : !playout || playout.items.length === 0 ? (
           <div className="text-slate-500 text-sm">No playout yet — click <span className="text-indigo-300">Build 48h</span>.</div>
         ) : (
