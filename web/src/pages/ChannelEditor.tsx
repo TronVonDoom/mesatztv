@@ -11,6 +11,8 @@ import {
 } from '../lib/api'
 import CollectionManager from '../components/CollectionManager'
 import LogoPicker from '../components/LogoPicker'
+import TimelineView from '../components/TimelineView'
+import WeeklyBlockGrid from '../components/WeeklyBlockGrid'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -64,6 +66,7 @@ export default function ChannelEditor() {
     fillerMode: 'none',
   })
   const [editingBlock, setEditingBlock] = useState<number | null>(null)
+  const [guideView, setGuideView] = useState<'timeline' | 'list'>('timeline')
 
   const load = () => api.channel(channelId).then(setCh).catch(() => {})
   const loadPlayout = () => api.playout(channelId, 24).then(setPlayout).catch(() => {})
@@ -123,6 +126,12 @@ export default function ChannelEditor() {
   function resetBlockForm() {
     setEditingBlock(null)
     setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', logoId: null, fillerMode: 'none' })
+  }
+
+  // Grid click on an empty slot → start a new block prefilled with that day/time.
+  function addBlockAt(day: number, startMin: number) {
+    setEditingBlock(null)
+    setBlk((b) => ({ ...b, collectionId: '', days: [day], start: minToTimeStr(startMin), end: minToTimeStr(Math.min(1439, startMin + 120)) }))
   }
 
   function editBlock(b: ChannelDetail['timeBlocks'][number]) {
@@ -246,7 +255,7 @@ export default function ChannelEditor() {
       {/* Collections owned by this channel */}
       <CollectionManager channelId={channelId} onChange={loadCols} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="space-y-6">
         {/* Rotation */}
         <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
           <h2 className="font-semibold mb-1">Rotation <span className="text-slate-600 font-normal">(optional)</span></h2>
@@ -289,8 +298,12 @@ export default function ChannelEditor() {
         <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
           <h2 className="font-semibold mb-1">Time blocks <span className="text-slate-600 font-normal">(optional)</span></h2>
           <p className="text-slate-500 text-xs mb-4">Scheduled slots for specific days/times. Override the rotation while active.</p>
+
+          <div className="mb-5">
+            <WeeklyBlockGrid blocks={ch.timeBlocks} onEditBlock={editBlock} onAddAt={addBlockAt} />
+          </div>
+
           <div className="space-y-2 mb-4">
-            {ch.timeBlocks.length === 0 && <div className="text-slate-600 text-sm">No time blocks.</div>}
             {ch.timeBlocks.map((b) => (
               <div key={b.id} className="flex items-center gap-3 text-sm rounded-lg bg-slate-950/60 border border-slate-800 px-3 py-2">
                 <div className="flex-1 min-w-0">
@@ -353,7 +366,20 @@ export default function ChannelEditor() {
       {/* Guide / playout */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h2 className="font-semibold">Guide preview</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="font-semibold">Guide preview</h2>
+            <div className="flex rounded-lg border border-slate-700 overflow-hidden text-xs">
+              {(['timeline', 'list'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setGuideView(v)}
+                  className={'px-2.5 py-1 capitalize ' + (guideView === v ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:text-slate-200')}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex gap-2">
             <button onClick={build} disabled={building || (ch.rotationItems.length === 0 && ch.timeBlocks.length === 0)} className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 px-4 py-2 text-sm font-medium">
               {building ? 'Building…' : 'Build 48h'}
@@ -371,6 +397,8 @@ export default function ChannelEditor() {
           <div className="text-slate-500 text-sm">Add a rotation item or a time block, then build the guide.</div>
         ) : !playout || playout.items.length === 0 ? (
           <div className="text-slate-500 text-sm">No playout yet — click <span className="text-indigo-300">Build 48h</span>.</div>
+        ) : guideView === 'timeline' ? (
+          <TimelineView playout={playout} />
         ) : (
           <div className="divide-y divide-slate-800/60">
             {playout.items.slice(0, 60).map((it, i) => {
