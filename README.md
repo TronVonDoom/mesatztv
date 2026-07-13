@@ -7,10 +7,10 @@ plugs straight into Plex, Jellyfin, Emby, or any IPTV player.
 Inspired by [ErsatzTV](https://ersatztv.org/), built to be simple to run and
 easy to update on Unraid.
 
-> **Status:** Milestone 3 — channels & scheduling. On top of the scanned,
-> TMDB-enriched, Plex-style library you can now build **collections**, define
-> **channels** with a 24/7 rotation plus optional day/time blocks, and generate a
-> **playout timeline** (guide). Next: M3U/XMLTV output, then live streaming.
+> **Status:** Milestone 4 — guide output. Build **collections** and **channels**
+> (24/7 rotation + day/time blocks), generate the **playout**, and expose it as an
+> **M3U playlist + XMLTV guide** (`/iptv/channels.m3u`, `/iptv/xmltv.xml`) for
+> Plex/Jellyfin/Threadfin. Next: the live ffmpeg stream (M5).
 
 ---
 
@@ -201,6 +201,7 @@ stream (M5).
 - [x] **M2 — Data + media indexing:** SQLite/Prisma, scan library, TMDB metadata
 - [x] **M3 — Channels & scheduler:** collections, 24/7 rotation + day/time blocks,
       hybrid playout engine, guide preview
-- [ ] **M4 — Guide output:** M3U playlist + XMLTV EPG generation
+- [x] **M4 — Guide output:** M3U playlist (`/iptv/channels.m3u`) + XMLTV EPG
+      (`/iptv/xmltv.xml`) for Plex/Jellyfin/Threadfin
 - [ ] **M5 — Streaming pipeline:** continuous ffmpeg stream, seamless transitions
 - [ ] **M6 — Bumpers, filler & overlays:** interstitials + scheduled watermarks

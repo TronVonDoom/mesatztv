@@ -2,6 +2,40 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type Channel } from '../lib/api'
 
+function IptvEndpoints() {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const [copied, setCopied] = useState<string | null>(null)
+  const rows = [
+    { label: 'M3U playlist', url: `${origin}/iptv/channels.m3u` },
+    { label: 'XMLTV guide', url: `${origin}/iptv/xmltv.xml` },
+  ]
+  const copy = (url: string) => {
+    navigator.clipboard?.writeText(url).then(() => {
+      setCopied(url)
+      setTimeout(() => setCopied(null), 1500)
+    })
+  }
+  return (
+    <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 p-4 mb-6">
+      <div className="text-sm font-medium mb-2">📺 IPTV endpoints</div>
+      <div className="space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center gap-2 text-sm">
+            <span className="text-slate-400 w-28 shrink-0">{r.label}</span>
+            <code className="flex-1 min-w-0 truncate text-slate-300 bg-slate-950/60 rounded px-2 py-1 text-xs">{r.url}</code>
+            <button onClick={() => copy(r.url)} className="text-xs rounded border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-2 py-1 shrink-0">
+              {copied === r.url ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 mt-2">
+        Add these to Plex, Jellyfin, or Threadfin. Build a channel's guide so the EPG has programs. Live playback arrives in the next milestone.
+      </p>
+    </div>
+  )
+}
+
 export default function Channels() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [form, setForm] = useState({ number: '', name: '', group: '' })
@@ -52,6 +86,8 @@ export default function Channels() {
           {error}
         </div>
       )}
+
+      <IptvEndpoints />
 
       <form onSubmit={add} className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mb-6 grid grid-cols-1 md:grid-cols-[100px_1fr_1fr_auto] gap-3 items-end">
         <label className="flex flex-col gap-1 text-sm">
