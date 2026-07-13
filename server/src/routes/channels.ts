@@ -7,6 +7,28 @@ export const channelsRouter = Router()
 const ORDERS = ['chronological', 'shuffle', 'rotate']
 const asOrder = (v: unknown) => (ORDERS.includes(String(v)) ? String(v) : 'chronological')
 
+// Expand a block into intervals on a weekly minute timeline [0, 10080),
+// splitting any that cross the week boundary. Handles midnight wrap.
+function toIntervals(days: number[], start: number, end: number): [number, number][] {
+  const dur = end > start ? end - start : 1440 - start + end
+  const res: [number, number][] = []
+  for (const d of days) {
+    if (Number.isNaN(d)) continue
+    const s = (((d * 1440 + start) % 10080) + 10080) % 10080
+    const e = s + dur
+    if (e <= 10080) res.push([s, e])
+    else {
+      res.push([s, 10080])
+      res.push([0, e - 10080])
+    }
+  }
+  return res
+}
+function intervalsOverlap(a: [number, number][], b: [number, number][]): boolean {
+  for (const [s1, e1] of a) for (const [s2, e2] of b) if (s1 < e2 && s2 < e1) return true
+  return false
+}
+
 channelsRouter.get('/', async (_req, res) => {
   const chs = await prisma.channel.findMany({
     orderBy: { number: 'asc' },
@@ -107,6 +129,13 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
   if (Number(endMinute) === Number(startMinute)) {
     return res.status(400).json({ error: 'Start and end time cannot be the same.' })
   }
+  const newIv = toIntervals(String(days).split(',').map(Number), Number(startMinute), Number(endMinute))
+  const siblings = await prisma.timeBlock.findMany({ where: { channelId } })
+  for (const s of siblings) {
+    if (intervalsOverlap(newIv, toIntervals(s.days.split(',').map(Number), s.startMinute, s.endMinute))) {
+      return res.status(409).json({ error: 'That block overlaps an existing time block on this channel.' })
+    }
+  }
   const b = await prisma.timeBlock.create({
     data: {
       channelId,
@@ -140,6 +169,20 @@ channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
   if (logoUrl !== undefined) data.logoUrl = logoUrl || null
   if (data.startMinute != null && data.endMinute != null && data.endMinute === data.startMinute) {
     return res.status(400).json({ error: 'Start and end time cannot be the same.' })
+  }
+  const current = await prisma.timeBlock.findUnique({ where: { id: blockId } })
+  if (!current) return res.status(404).json({ error: 'Block not found.' })
+  const eDays = (data.days ?? current.days).split(',').map(Number)
+  const eStart = data.startMinute ?? current.startMinute
+  const eEnd = data.endMinute ?? current.endMinute
+  const newIv = toIntervals(eDays, eStart, eEnd)
+  const others = await prisma.timeBlock.findMany({
+    where: { channelId: current.channelId, id: { not: blockId } },
+  })
+  for (const s of others) {
+    if (intervalsOverlap(newIv, toIntervals(s.days.split(',').map(Number), s.startMinute, s.endMinute))) {
+      return res.status(409).json({ error: 'That change would overlap another time block on this channel.' })
+    }
   }
   const b = await prisma.timeBlock.update({ where: { id: blockId }, data }).catch(() => null)
   if (!b) return res.status(404).json({ error: 'Block not found.' })
