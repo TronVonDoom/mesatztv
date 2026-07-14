@@ -72,31 +72,6 @@ assetsRouter.get('/:id/file', async (req, res) => {
   res.sendFile(file)
 })
 
-// Resolve an asset's absolute path on disk (used by the "use as …" actions).
-export async function assetPath(id: number): Promise<string | null> {
-  const asset = await prisma.asset.findUnique({ where: { id } })
-  if (!asset) return null
-  const file = path.join(assetsDir(), asset.filename)
-  return fs.existsSync(file) ? file : null
-}
-
-// Apply an asset as the intermission music or the filler visual (sets the
-// corresponding setting to the asset's on-disk path).
-assetsRouter.post('/:id/use', async (req, res) => {
-  const id = Number(req.params.id)
-  const as = String(req.body?.as ?? '')
-  const key = as === 'music' ? 'filler_music' : as === 'filler' ? 'filler_path' : null
-  if (!key) return res.status(400).json({ error: 'as must be "music" or "filler"' })
-  const p = await assetPath(id)
-  if (!p) return res.status(404).json({ error: 'asset file not found' })
-  await prisma.setting.upsert({ where: { key }, create: { key, value: p }, update: { value: p } })
-  // Using a filler clip implies the "custom" filler style.
-  if (as === 'filler') {
-    await prisma.setting.upsert({ where: { key: 'filler_style' }, create: { key: 'filler_style', value: 'custom' }, update: { value: 'custom' } })
-  }
-  res.json({ ok: true, path: p })
-})
-
 assetsRouter.delete('/:id', async (req, res) => {
   const id = Number(req.params.id)
   const asset = await prisma.asset.findUnique({ where: { id } })

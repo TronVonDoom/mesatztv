@@ -504,9 +504,6 @@ function mesatztvLogoFile(): string {
 const FILLER_VERSION = 4
 const FROSTED_VERSION = 3
 
-const getSettingVal = async (k: string): Promise<string | undefined> =>
-  (await prisma.setting.findUnique({ where: { key: k } }))?.value ?? undefined
-
 // ffprobe a media file's duration in seconds (0 on failure).
 function probeDuration(file: string): Promise<number> {
   return new Promise((resolve) => {
@@ -631,43 +628,20 @@ export async function resolveFillerClipById(id: number, onProgress?: ProgressCb)
   return resolveFillerClip(f, await logoFileById(logoId, logoUrl), onProgress)
 }
 
-// Global fallback filler (used when nothing is configured), based on the global
-// style setting.
-async function getFillerClip(channelLogo?: string): Promise<string | undefined> {
-  const style = (await getSettingVal('filler_style')) || 'animated'
-  if (style === 'custom') {
-    const p = await getSettingVal('filler_path')
-    if (p && fs.existsSync(p)) return p
-  } else if (style === 'frosted' && channelLogo) {
-    const f = await ensureFrostedFiller(channelLogo)
-    if (f) return f // else fall through to the animated fallback
-  }
-  return ensureAnimatedFiller()
-}
-
-// Optional global ambient music (loops under the fallback filler).
-async function getFillerMusic(): Promise<string | undefined> {
-  const s = await prisma.setting.findUnique({ where: { key: 'filler_music' } })
-  return s?.value && fs.existsSync(s.value) ? s.value : undefined
-}
-
 /**
  * Pre-build filler at boot so an intermission never blocks on generation: the
- * animated default, the global frosted-per-channel (if selected), and every
- * channel/block filler.
+ * animated fallback plus every channel/block filler.
  */
 export async function warmFiller(): Promise<void> {
   const animated = await ensureAnimatedFiller(30).catch(() => undefined)
   if (animated) log('info', 'system', `Animated filler ready: ${animated}`)
   else log('warn', 'system', 'No filler clip available — gaps will play black')
 
-  const globalFrosted = (await getSettingVal('filler_style')) === 'frosted'
   const channels = await prisma.channel.findMany({
     include: { fillers: true, timeBlocks: { include: { fillers: true, collection: true } } },
   })
   for (const ch of channels) {
     const chLogo = await logoFileById(ch.logoId, ch.logoUrl)
-    if (globalFrosted && chLogo) await ensureFrostedFiller(chLogo).catch(() => {})
     for (const f of ch.fillers) await resolveFillerClip(f, chLogo).catch(() => {})
     for (const b of ch.timeBlocks) {
       if (b.fillers.length === 0) continue
@@ -779,13 +753,11 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
   const enc = await resolveEncoder(profile.hwaccel)
   log('debug', 'ffmpeg', `Channel ${channelNumber}: ${profile.width}x${profile.height}@${profile.fps} ${profile.quality} audio ${profile.audioBitrate}k, encoder ${enc}`)
   const defaultWm = await loadWatermark()
-  const fillerMusic = await getFillerMusic()
   const logos = await prisma.logo.findMany()
   const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
   // Each logo can carry its own watermark settings; legacy URL logos and the
   // bundled fallback icon use the global default.
   const logoWm = new Map<number, WatermarkConfig>(logos.map((l) => [l.id, parseWatermark(l.watermark, defaultWm)]))
-  if (fillerMusic) log('debug', 'stream', `Channel ${channelNumber}: intermission music ${path.basename(fillerMusic)}`)
 
   res.writeHead(200, {
     'Content-Type': 'video/mp2t',
@@ -864,7 +836,8 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
 
         if (item.kind === 'filler' || !mi) {
           const genStart = Date.now()
-          // Filler pool: the active block's own fillers → the channel's → global.
+          // Filler pool: the active block's own fillers → the channel's →
+          // the built-in animated fallback.
           const poolBlock = activeBlockAt(channel.timeBlocks, item.startTime)
           const blockPool = poolBlock?.fillers ?? []
           const pool = blockPool.length > 0 ? blockPool : channel.fillers
@@ -877,8 +850,7 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
             clip = r.clip
             music = r.music
           } else {
-            clip = await getFillerClip(logo)
-            music = fillerMusic
+            clip = await ensureAnimatedFiller()
           }
           const genMs = Date.now() - genStart
           if (genMs > 500) log('warn', 'system', `Channel ${channelNumber}: filler resolve blocked ${genMs}ms (should be pre-warmed)`)

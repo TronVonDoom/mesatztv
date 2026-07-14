@@ -43,18 +43,16 @@ export default function Media() {
         <AssetManager
           kind="audio"
           accept="audio/*"
-          useAs="music"
-          useLabel="Set as intermission music"
           emptyText="No audio uploaded yet. Add ambient tracks to play during intermissions."
+          hint="Pick a track in a channel or block filler (channel editor → Fillers) to play it during intermissions."
         />
       )}
       {tab === 'filler' && (
         <AssetManager
           kind="filler"
           accept="video/*"
-          useAs="filler"
-          useLabel="Set as filler visual"
           emptyText="No filler clips uploaded yet. Upload a video to play during gaps between programs."
+          hint="Use a clip via a channel or block filler with the “Custom clip” visual. Generated fillers also land here."
         />
       )}
     </div>

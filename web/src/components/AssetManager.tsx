@@ -16,15 +16,13 @@ function fmtSize(bytes: number | null): string {
 export default function AssetManager({
   kind,
   accept,
-  useAs,
-  useLabel,
   emptyText,
+  hint,
 }: {
   kind: AssetKind
   accept: string
-  useAs: 'music' | 'filler'
-  useLabel: string
   emptyText: string
+  hint?: string
 }) {
   const [assets, setAssets] = useState<Asset[]>([])
   const [name, setName] = useState('')
@@ -60,15 +58,6 @@ export default function AssetManager({
     }
   }
 
-  async function use(a: Asset) {
-    try {
-      await api.useAsset(a.id, useAs)
-      setMsg({ type: 'ok', text: `"${a.name}" ${useLabel.toLowerCase()}. ✅` })
-    } catch (err) {
-      setMsg({ type: 'err', text: err instanceof Error ? err.message : 'Failed' })
-    }
-  }
-
   async function del(id: number) {
     await api.deleteAsset(id).catch(() => {})
     refresh()
@@ -76,6 +65,7 @@ export default function AssetManager({
 
   return (
     <div>
+      {hint && <p className="text-xs text-slate-500 mb-3">{hint}</p>}
       {msg && (
         <div
           className={
@@ -128,12 +118,6 @@ export default function AssetManager({
               ) : (
                 <video controls preload="none" src={assetFileUrl(a.id)} className="h-16 rounded bg-black" />
               )}
-              <button
-                onClick={() => use(a)}
-                className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-3 py-1.5 text-sm"
-              >
-                {useLabel}
-              </button>
               <button onClick={() => del(a.id)} className="text-slate-600 hover:text-rose-400 text-lg px-1" aria-label="Delete">
                 ×
               </button>

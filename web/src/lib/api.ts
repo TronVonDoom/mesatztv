@@ -114,12 +114,8 @@ export type WatermarkConfig = {
   constrainToMedia: boolean
 }
 
-export type FillerStyle = 'animated' | 'frosted' | 'custom'
 export type SettingsInfo = {
   tmdbConfigured: boolean
-  fillerPath: string | null
-  fillerMusicPath: string | null
-  fillerStyle: FillerStyle
   watermark: WatermarkConfig
 }
 
@@ -395,13 +391,6 @@ export const api = {
       method: 'POST',
     }),
   metadataStatus: () => request<MetadataStatus>('/api/metadata/status'),
-  generateFiller: () => request<{ ok: boolean; path: string }>('/api/settings/filler/generate', { method: 'POST' }),
-  setFillerPath: (path: string) =>
-    request<{ ok: boolean; path: string | null }>('/api/settings/filler', { method: 'POST', body: JSON.stringify({ path }) }),
-  setFillerMusic: (path: string) =>
-    request<{ ok: boolean; path: string | null }>('/api/settings/filler/music', { method: 'POST', body: JSON.stringify({ path }) }),
-  setFillerStyle: (style: FillerStyle) =>
-    request<{ ok: boolean; style: FillerStyle }>('/api/settings/filler/style', { method: 'POST', body: JSON.stringify({ style }) }),
   saveWatermark: (wm: WatermarkConfig) =>
     request<{ ok: boolean; watermark: WatermarkConfig }>('/api/settings/watermark', { method: 'POST', body: JSON.stringify(wm) }),
 
@@ -535,8 +524,6 @@ export const api = {
     }
     return res.json() as Promise<Asset>
   },
-  useAsset: (id: number, as: 'music' | 'filler') =>
-    request<{ ok: boolean; path: string }>(`/api/assets/${id}/use`, { method: 'POST', body: JSON.stringify({ as }) }),
   deleteAsset: (id: number) => request<void>(`/api/assets/${id}`, { method: 'DELETE' }),
 
   // --- admin / maintenance ---

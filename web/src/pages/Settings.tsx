@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, backupUrl, type FillerStyle, type WatermarkConfig } from '../lib/api'
+import { api, backupUrl, type WatermarkConfig } from '../lib/api'
 import WatermarkFields from '../components/WatermarkFields'
 import EncodingProfilesCard from '../components/EncodingProfilesCard'
 
@@ -8,13 +8,6 @@ export default function Settings() {
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
-  const [fillerPath, setFillerPath] = useState<string | null>(null)
-  const [fillerMusicPath, setFillerMusicPath] = useState<string | null>(null)
-  const [fillerStyle, setFillerStyle] = useState<FillerStyle>('animated')
-  const [provide, setProvide] = useState('')
-  const [music, setMusic] = useState('')
-  const [fillerBusy, setFillerBusy] = useState(false)
-  const [fillerMsg, setFillerMsg] = useState<string | null>(null)
   const [wm, setWm] = useState<WatermarkConfig | null>(null)
   const [wmMsg, setWmMsg] = useState<string | null>(null)
   const [wipeAssets, setWipeAssets] = useState(true)
@@ -26,9 +19,6 @@ export default function Settings() {
       .settings()
       .then((s) => {
         setConfigured(s.tmdbConfigured)
-        setFillerPath(s.fillerPath)
-        setFillerMusicPath(s.fillerMusicPath)
-        setFillerStyle(s.fillerStyle)
         setWm(s.watermark)
       })
       .catch(() => {})
@@ -44,65 +34,6 @@ export default function Settings() {
       setWmMsg('Watermark saved. ✅')
     } catch (err) {
       setWmMsg(err instanceof Error ? err.message : 'Failed to save watermark')
-    }
-  }
-
-  async function chooseStyle(style: FillerStyle) {
-    setFillerStyle(style)
-    setFillerMsg(null)
-    try {
-      await api.setFillerStyle(style)
-      setFillerMsg(
-        style === 'frosted'
-          ? 'Frosted-glass filler selected. It renders per channel on the next intermission (or restart).'
-          : 'Filler style updated. ✅',
-      )
-    } catch (e) {
-      setFillerMsg(e instanceof Error ? e.message : 'Failed to set style')
-    }
-  }
-
-  async function genFiller() {
-    setFillerBusy(true)
-    setFillerMsg(null)
-    try {
-      const r = await api.generateFiller()
-      setFillerPath(r.path)
-      setFillerMsg('Ambient filler generated. ✅')
-    } catch (e) {
-      setFillerMsg(e instanceof Error ? e.message : 'Failed to generate filler')
-    } finally {
-      setFillerBusy(false)
-    }
-  }
-  async function saveProvide(e: React.FormEvent) {
-    e.preventDefault()
-    setFillerBusy(true)
-    setFillerMsg(null)
-    try {
-      const r = await api.setFillerPath(provide.trim())
-      setFillerPath(r.path)
-      setProvide('')
-      setFillerMsg('Filler updated. ✅')
-    } catch (e) {
-      setFillerMsg(e instanceof Error ? e.message : 'Failed to set filler')
-    } finally {
-      setFillerBusy(false)
-    }
-  }
-  async function saveMusic(e: React.FormEvent) {
-    e.preventDefault()
-    setFillerBusy(true)
-    setFillerMsg(null)
-    try {
-      const r = await api.setFillerMusic(music.trim())
-      setFillerMusicPath(r.path)
-      setMusic('')
-      setFillerMsg('Intermission music updated. ✅')
-    } catch (e) {
-      setFillerMsg(e instanceof Error ? e.message : 'Failed to set music')
-    } finally {
-      setFillerBusy(false)
     }
   }
 
@@ -139,7 +70,10 @@ export default function Settings() {
   return (
     <div className="max-w-xl">
       <h1 className="text-2xl font-bold mb-1">Settings</h1>
-      <p className="text-slate-400 text-sm mb-6">Configure external services.</p>
+      <p className="text-slate-400 text-sm mb-6">
+        Global defaults and external services. Fillers and logos live on each channel; assets live on the
+        Media page.
+      </p>
 
       <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
         <div className="flex items-center gap-3 mb-2">
@@ -202,99 +136,12 @@ export default function Settings() {
         </form>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
-        <h2 className="font-semibold mb-1">Filler (station ID)</h2>
-        <p className="text-slate-400 text-sm mb-3">
-          Plays during gaps between programs. Pick a style below.
-        </p>
-
-        <div className="grid sm:grid-cols-3 gap-2 mb-4">
-          {([
-            { id: 'animated', title: 'Animated', desc: 'Drifting gradient with subtle motion.' },
-            { id: 'frosted', title: 'Frosted glass', desc: 'Channel + MeSatzTV logos scrolling behind glass.' },
-            { id: 'custom', title: 'Custom clip', desc: 'Use your own uploaded/linked video.' },
-          ] as const).map((o) => (
-            <button
-              key={o.id}
-              onClick={() => chooseStyle(o.id)}
-              className={
-                'text-left rounded-lg border p-3 transition-colors ' +
-                (fillerStyle === o.id
-                  ? 'border-indigo-400 bg-indigo-500/10'
-                  : 'border-slate-700 hover:border-slate-500')
-              }
-            >
-              <div className="text-sm font-medium">{o.title}</div>
-              <div className="text-xs text-slate-400 mt-0.5">{o.desc}</div>
-            </button>
-          ))}
-        </div>
-        <p className="text-slate-500 text-xs mb-3">
-          Upload audio &amp; custom filler clips on the <span className="text-slate-300">Media</span> page.
-          For custom, set the clip below or use “Set as filler visual” in Media.
-        </p>
-
-        <div className="text-xs mb-3">
-          Current:{' '}
-          {fillerPath ? (
-            <code className="text-emerald-300 break-all">{fillerPath}</code>
-          ) : (
-            <span className="text-slate-500">auto-generated default</span>
-          )}
-        </div>
-        {fillerMsg && <div className="text-sm text-emerald-300 mb-3">{fillerMsg}</div>}
-        <div className="flex flex-wrap gap-2 items-center mb-3">
-          <button onClick={genFiller} disabled={fillerBusy} className="rounded-lg bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 px-4 py-2 text-sm font-medium">
-            {fillerBusy ? 'Working…' : 'Generate ambient filler'}
-          </button>
-          <span className="text-xs text-slate-500">or point at your own clip:</span>
-        </div>
-        <form onSubmit={saveProvide} className="flex gap-2">
-          <input
-            className="flex-1 min-w-0 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm font-mono focus:border-indigo-500 outline-none"
-            placeholder="/media/bumpers/station-id.mp4 (blank = default)"
-            value={provide}
-            onChange={(e) => setProvide(e.target.value)}
-          />
-          <button type="submit" disabled={fillerBusy} className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-4 py-2 text-sm shrink-0">
-            Use file
-          </button>
-        </form>
-
-        <div className="border-t border-slate-800 mt-4 pt-4">
-          <h3 className="text-sm font-medium mb-1">Intermission music</h3>
-          <p className="text-slate-400 text-xs mb-2">
-            Optional ambient track looped under the filler during gaps (overrides the filler clip's own
-            audio). Point at an audio or video file inside your mounted media.
-          </p>
-          <div className="text-xs mb-2">
-            Current:{' '}
-            {fillerMusicPath ? (
-              <code className="text-emerald-300 break-all">{fillerMusicPath}</code>
-            ) : (
-              <span className="text-slate-500">none (filler's own audio)</span>
-            )}
-          </div>
-          <form onSubmit={saveMusic} className="flex gap-2">
-            <input
-              className="flex-1 min-w-0 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm font-mono focus:border-indigo-500 outline-none"
-              placeholder="/media/music/ambient.mp3 (blank = clear)"
-              value={music}
-              onChange={(e) => setMusic(e.target.value)}
-            />
-            <button type="submit" disabled={fillerBusy} className="rounded-lg border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-4 py-2 text-sm shrink-0">
-              {fillerMusicPath ? 'Update' : 'Use file'}
-            </button>
-          </form>
-        </div>
-      </div>
-
       {wm && (
         <form onSubmit={saveWm} className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
           <h2 className="font-semibold mb-1">Default watermark (on-screen logo)</h2>
           <p className="text-slate-400 text-sm mb-4">
             The fallback watermark for logos without their own settings (and legacy URL logos). Set
-            per-logo overrides on the <span className="text-slate-300">Logos</span> page. Intermittent
+            per-logo overrides on the <span className="text-slate-300">Media</span> page. Intermittent
             mode shows the logo for the set duration every so many minutes, aligned to wall-clock time.
           </p>
           {wmMsg && <div className="text-sm text-emerald-300 mb-3">{wmMsg}</div>}
