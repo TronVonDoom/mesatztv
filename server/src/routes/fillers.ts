@@ -58,31 +58,56 @@ fillersRouter.delete('/:id', async (req, res) => {
   res.status(204).end()
 })
 
-// POST /api/fillers/:id/generate — build the branded clip and save it as a Media
-// asset (kind "filler") so it's previewable (static) and reusable. Reuses the
-// filler's previous generated asset on regenerate. Returns the asset.
+// In-memory generation progress, keyed by filler id (polled by the UI).
+type GenState = { percent: number; done: boolean; error?: string; assetId?: number }
+const genJobs = new Map<number, GenState>()
+
+// Save a freshly-built clip as a Media asset (kind "filler"), reusing the
+// filler's previous generated asset on regenerate.
+async function registerGeneratedAsset(fillerId: number, name: string, clip: string, prevAssetId: number | null): Promise<number> {
+  const size = fs.statSync(clip).size
+  let asset = prevAssetId != null ? await prisma.asset.findUnique({ where: { id: prevAssetId } }) : null
+  if (asset) {
+    fs.copyFileSync(clip, path.join(assetsDir(), asset.filename))
+    await prisma.asset.update({ where: { id: asset.id }, data: { name, sizeBytes: size } })
+    return asset.id
+  }
+  asset = await prisma.asset.create({ data: { name, kind: 'filler', filename: 'pending', mime: 'video/mp4', sizeBytes: size } })
+  const filename = `asset-${asset.id}.mp4`
+  fs.copyFileSync(clip, path.join(assetsDir(), filename))
+  await prisma.asset.update({ where: { id: asset.id }, data: { filename } })
+  await prisma.filler.update({ where: { id: fillerId }, data: { generatedAssetId: asset.id } })
+  return asset.id
+}
+
+// POST /api/fillers/:id/generate — kick off generation in the background (so the
+// request returns immediately) and track progress. Poll the status endpoint.
 fillersRouter.post('/:id/generate', async (req, res) => {
   const id = Number(req.params.id)
   const filler = await prisma.filler.findUnique({ where: { id } })
   if (!filler) return res.status(404).json({ error: 'Filler not found' })
+  if (genJobs.get(id)?.done === false) return res.json({ started: true }) // already running
 
-  const r = await resolveFillerClipById(id).catch(() => null)
-  if (!r?.clip || !fs.existsSync(r.clip)) return res.status(500).json({ error: 'Generation failed — check the Logs.' })
-
+  genJobs.set(id, { percent: 0, done: false })
   const name = filler.name?.trim() || `${filler.style} filler`
-  const size = fs.statSync(r.clip).size
+  ;(async () => {
+    try {
+      const r = await resolveFillerClipById(id, (pct) => {
+        const s = genJobs.get(id)
+        if (s) s.percent = pct
+      })
+      if (!r?.clip || !fs.existsSync(r.clip)) throw new Error('Generation produced no clip — check the Logs.')
+      const assetId = await registerGeneratedAsset(id, name, r.clip, filler.generatedAssetId)
+      genJobs.set(id, { percent: 100, done: true, assetId })
+    } catch (e) {
+      genJobs.set(id, { percent: 100, done: true, error: e instanceof Error ? e.message : 'Generation failed' })
+    }
+  })()
+  res.status(202).json({ started: true })
+})
 
-  // Reuse the existing generated asset if it still exists, else make a new one.
-  let asset = filler.generatedAssetId != null ? await prisma.asset.findUnique({ where: { id: filler.generatedAssetId } }) : null
-  if (asset) {
-    fs.copyFileSync(r.clip, path.join(assetsDir(), asset.filename))
-    asset = await prisma.asset.update({ where: { id: asset.id }, data: { name, sizeBytes: size } })
-  } else {
-    asset = await prisma.asset.create({ data: { name, kind: 'filler', filename: 'pending', mime: 'video/mp4', sizeBytes: size } })
-    const filename = `asset-${asset.id}.mp4`
-    fs.copyFileSync(r.clip, path.join(assetsDir(), filename))
-    asset = await prisma.asset.update({ where: { id: asset.id }, data: { filename } })
-    await prisma.filler.update({ where: { id }, data: { generatedAssetId: asset.id } })
-  }
-  res.json({ asset: { id: asset.id, name: asset.name, kind: asset.kind, mime: asset.mime, sizeBytes: asset.sizeBytes, createdAt: asset.createdAt } })
+// GET /api/fillers/:id/generate/status — poll generation progress.
+fillersRouter.get('/:id/generate/status', (req, res) => {
+  const s = genJobs.get(Number(req.params.id))
+  res.json(s ?? { idle: true })
 })

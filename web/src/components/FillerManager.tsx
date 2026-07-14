@@ -15,6 +15,7 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
   const [open, setOpen] = useState(false)
   const [previewId, setPreviewId] = useState<number | null>(null)
   const [generatingId, setGeneratingId] = useState<number | null>(null)
+  const [genPercent, setGenPercent] = useState(0)
   const [genError, setGenError] = useState<string | null>(null)
 
   const ownerKey = owner.channelId ?? owner.timeBlockId
@@ -55,11 +56,25 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
   }
   async function generate(id: number) {
     setGeneratingId(id)
+    setGenPercent(0)
     setGenError(null)
     try {
-      await api.generateFillerClip(id)
-      await refresh()
-      setPreviewId(id)
+      await api.generateFillerClip(id) // returns immediately; work runs in the background
+      for (let tries = 0; tries < 600; tries++) {
+        await new Promise((r) => setTimeout(r, 600))
+        const s = await api.fillerGenStatus(id).catch(() => null)
+        if (!s) continue
+        if (s.percent != null) setGenPercent(s.percent)
+        if (s.done) {
+          if (s.error) setGenError(s.error)
+          else {
+            await refresh()
+            setPreviewId(id)
+          }
+          break
+        }
+        if (tries === 599) setGenError('Generation is taking too long — check the Logs.')
+      }
     } catch (e) {
       setGenError(e instanceof Error ? e.message : 'Generation failed')
     } finally {
@@ -91,10 +106,7 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
                   {f.audioAssetId != null && ` · 🎵 ${audioName(f.audioAssetId) ?? 'audio'}`}
                 </span>
                 {generatingId === f.id ? (
-                  <span className="text-xs text-indigo-300 shrink-0 inline-flex items-center gap-1">
-                    <span className="inline-block w-3 h-3 border-2 border-indigo-400/40 border-t-indigo-300 rounded-full animate-spin" />
-                    Generating…
-                  </span>
+                  <span className="text-xs text-indigo-300 shrink-0 tabular-nums">Generating {genPercent}%</span>
                 ) : f.generatedAssetId != null ? (
                   <>
                     <button onClick={() => setPreviewId(previewId === f.id ? null : f.id)} className="text-xs text-slate-400 hover:text-indigo-300">{previewId === f.id ? 'Hide' : 'Preview'}</button>
@@ -107,7 +119,12 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
                 <button onClick={() => del(f.id)} className="text-slate-600 hover:text-rose-400" aria-label="Delete">×</button>
               </div>
               {generatingId === f.id && (
-                <p className="text-[11px] text-slate-500 mt-1 px-1">Building the clip (frosted can take ~20–40s). It's saved to the Media page when done.</p>
+                <div className="mt-1.5 px-1">
+                  <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div className="h-full bg-indigo-500 transition-[width] duration-500" style={{ width: `${genPercent}%` }} />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">Building the clip{genPercent === 0 ? ' (starting…)' : ''}. Saved to the Media page when done.</p>
+                </div>
               )}
               {previewId === f.id && f.generatedAssetId != null && (
                 <div className="mt-1.5 rounded border border-slate-800 bg-black p-2">

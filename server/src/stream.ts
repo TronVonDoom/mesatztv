@@ -366,11 +366,31 @@ async function localLogo(raw: string | null): Promise<string | undefined> {
   return result
 }
 
-function runFfmpeg(args: string[]): Promise<void> {
+export type ProgressCb = (percent: number) => void
+
+// Run a generation ffmpeg (output goes to a file, so stdout is free for the
+// -progress feed). When onProgress+totalSec are given, report 0..99% from the
+// output timestamp. NOTE: only for generation — never for the streaming pipe.
+function runFfmpeg(args: string[], onProgress?: ProgressCb, totalSec?: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const p = spawn('ffmpeg', args)
+    const p = spawn('ffmpeg', ['-progress', 'pipe:1', ...args])
     let err = ''
     p.stderr?.on('data', (d) => (err += d))
+    if (onProgress && totalSec && totalSec > 0) {
+      let buf = ''
+      p.stdout?.on('data', (d) => {
+        buf += d.toString()
+        const lines = buf.split('\n')
+        buf = lines.pop() || ''
+        for (const line of lines) {
+          // out_time_us and out_time_ms are both microseconds in ffmpeg's feed.
+          const m = line.match(/^out_time_(?:us|ms)=(\d+)/)
+          if (m) onProgress(Math.max(0, Math.min(99, Math.round((Number(m[1]) / 1e6 / totalSec) * 100))))
+        }
+      })
+    } else {
+      p.stdout?.on('data', () => {}) // drain
+    }
     p.on('error', reject)
     p.on('close', (c) => (c === 0 ? resolve() : reject(new Error('ffmpeg exited ' + c + ': ' + err.slice(-500)))))
   })
@@ -414,13 +434,13 @@ function fillerArgsBasic(out: string, dur: number, audioFile?: string): string[]
 }
 
 /** Generate a loopable ambient "please stand by" clip (animated, with a fallback). */
-export async function generateFiller(out: string, dur = 30, audioFile?: string): Promise<void> {
+export async function generateFiller(out: string, dur = 30, audioFile?: string, onProgress?: ProgressCb): Promise<void> {
   const d = clampDur(dur)
   try {
-    await runFfmpeg(fillerArgsAnimated(out, d, audioFile))
+    await runFfmpeg(fillerArgsAnimated(out, d, audioFile), onProgress, d)
   } catch (e) {
     log('warn', 'system', 'Animated filler failed, using basic gradient fallback', String(e))
-    await runFfmpeg(fillerArgsBasic(out, d, audioFile))
+    await runFfmpeg(fillerArgsBasic(out, d, audioFile), onProgress, d)
   }
 }
 
@@ -470,8 +490,9 @@ function frostedArgs(out: string, channelLogo: string, mzLogo: string, D: number
   ]
 }
 
-export function generateFrostedFiller(out: string, channelLogo: string, mzLogo: string, dur = 30, audioFile?: string): Promise<void> {
-  return runFfmpeg(frostedArgs(out, channelLogo, mzLogo, clampDur(dur), audioFile))
+export function generateFrostedFiller(out: string, channelLogo: string, mzLogo: string, dur = 30, audioFile?: string, onProgress?: ProgressCb): Promise<void> {
+  const d = clampDur(dur)
+  return runFfmpeg(frostedArgs(out, channelLogo, mzLogo, d, audioFile), onProgress, d)
 }
 
 function mesatztvLogoFile(): string {
@@ -517,13 +538,13 @@ function fileKey(f?: string): string {
 }
 
 // Animated filler for a given loop length + optional baked-in audio (persisted).
-async function ensureAnimatedFiller(dur = 30, audioFile?: string): Promise<string | undefined> {
+async function ensureAnimatedFiller(dur = 30, audioFile?: string, onProgress?: ProgressCb): Promise<string | undefined> {
   const d = clampDur(dur)
   const suffix = audioFile ? createHash('md5').update(`${d}:${fileKey(audioFile)}`).digest('hex') : `d${d}`
   const out = path.join(dataDir(), `filler-anim-v${FILLER_VERSION}-${suffix}.mp4`)
   if (fs.existsSync(out)) return out
   log('info', 'system', `Generating animated filler (${d}s${audioFile ? ' + audio' : ''})…`)
-  const ok = await generateFiller(out, d, audioFile)
+  const ok = await generateFiller(out, d, audioFile, onProgress)
     .then(() => true)
     .catch((e) => {
       log('error', 'system', 'Filler generation failed', String(e))
@@ -533,13 +554,13 @@ async function ensureAnimatedFiller(dur = 30, audioFile?: string): Promise<strin
 }
 
 // Frosted-glass filler, cached by logo + duration + baked audio.
-async function ensureFrostedFiller(logoFile: string, dur = 30, audioFile?: string): Promise<string | undefined> {
+async function ensureFrostedFiller(logoFile: string, dur = 30, audioFile?: string, onProgress?: ProgressCb): Promise<string | undefined> {
   const d = clampDur(dur)
   const key = createHash('md5').update(`${fileKey(logoFile)}:${d}:${fileKey(audioFile)}:v${FROSTED_VERSION}`).digest('hex')
   const out = path.join(dataDir(), `filler-frosted-${key}.mp4`)
   if (fs.existsSync(out)) return out
   log('info', 'system', `Generating frosted-glass filler for logo ${path.basename(logoFile)} (${d}s${audioFile ? ' + audio' : ''})…`)
-  const ok = await generateFrostedFiller(out, logoFile, mesatztvLogoFile(), d, audioFile)
+  const ok = await generateFrostedFiller(out, logoFile, mesatztvLogoFile(), d, audioFile, onProgress)
     .then(() => true)
     .catch((e) => {
       log('warn', 'system', 'Frosted filler generation failed — falling back to animated', String(e))
@@ -552,8 +573,8 @@ type FillerRow = { style: string; assetId: number | null; audioAssetId: number |
 
 // Resolve a Filler to a playable clip (+ music overlaid at playback for custom
 // clips). Generated styles bake the chosen audio in and match its length. Falls
-// back to animated on any failure.
-async function resolveFillerClip(f: FillerRow, logoFile: string | undefined): Promise<{ clip?: string; music?: string }> {
+// back to animated on any failure. `onProgress` reports generation progress.
+async function resolveFillerClip(f: FillerRow, logoFile: string | undefined, onProgress?: ProgressCb): Promise<{ clip?: string; music?: string }> {
   const audioFile = await assetFilePath(f.audioAssetId)
   let dur = clampDur(f.durationSec)
   if (f.durationMode === 'audio' && audioFile) {
@@ -565,13 +586,13 @@ async function resolveFillerClip(f: FillerRow, logoFile: string | undefined): Pr
     // A real custom clip plays as-is with the chosen audio overlaid; if missing,
     // fall back to a generated clip with the audio baked in.
     if (clip) return { clip, music: audioFile }
-    return { clip: await ensureAnimatedFiller(dur, audioFile) }
+    return { clip: await ensureAnimatedFiller(dur, audioFile, onProgress) }
   }
   if (f.style === 'frosted' && logoFile) {
-    const clip = await ensureFrostedFiller(logoFile, dur, audioFile)
-    return { clip: clip ?? (await ensureAnimatedFiller(dur, audioFile)) }
+    const clip = await ensureFrostedFiller(logoFile, dur, audioFile, onProgress)
+    return { clip: clip ?? (await ensureAnimatedFiller(dur, audioFile, onProgress)) }
   }
-  return { clip: await ensureAnimatedFiller(dur, audioFile) }
+  return { clip: await ensureAnimatedFiller(dur, audioFile, onProgress) }
 }
 
 // Resolve the on-disk logo file for a logo id (or legacy url), for filler branding.
@@ -583,8 +604,9 @@ async function logoFileById(logoId: number | null, logoUrl: string | null): Prom
   return localLogo(logoUrl || null)
 }
 
-// Build (if needed) and return a Filler's branded clip — used by the preview endpoint.
-export async function resolveFillerClipById(id: number): Promise<{ clip?: string; music?: string } | null> {
+// Build (if needed) and return a Filler's branded clip — used by the generate
+// endpoint. `onProgress` reports 0..99% during generation.
+export async function resolveFillerClipById(id: number, onProgress?: ProgressCb): Promise<{ clip?: string; music?: string } | null> {
   const f = await prisma.filler.findUnique({
     where: { id },
     include: { channel: true, timeBlock: { include: { channel: true, collection: true } } },
@@ -599,7 +621,7 @@ export async function resolveFillerClipById(id: number): Promise<{ clip?: string
     logoId = f.channel.logoId
     logoUrl = f.channel.logoUrl
   }
-  return resolveFillerClip(f, await logoFileById(logoId, logoUrl))
+  return resolveFillerClip(f, await logoFileById(logoId, logoUrl), onProgress)
 }
 
 // Global fallback filler (used when nothing is configured), based on the global

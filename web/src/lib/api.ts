@@ -191,6 +191,7 @@ export type FillerInput = {
   durationMode: 'fixed' | 'audio'
   durationSec: number
 }
+export type FillerGenStatus = { percent?: number; done?: boolean; error?: string; assetId?: number; idle?: boolean }
 export type Collection = {
   id: number
   name: string
@@ -454,7 +455,8 @@ export const api = {
   updateFiller: (id: number, data: FillerInput) =>
     request<Filler>(`/api/fillers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteFiller: (id: number) => request<void>(`/api/fillers/${id}`, { method: 'DELETE' }),
-  generateFillerClip: (id: number) => request<{ asset: Asset }>(`/api/fillers/${id}/generate`, { method: 'POST' }),
+  generateFillerClip: (id: number) => request<{ started: boolean }>(`/api/fillers/${id}/generate`, { method: 'POST' }),
+  fillerGenStatus: (id: number) => request<FillerGenStatus>(`/api/fillers/${id}/generate/status`),
 
   // --- channels ---
   channels: () => request<Channel[]>('/api/channels'),
