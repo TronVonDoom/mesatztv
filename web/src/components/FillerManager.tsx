@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, fillerClipUrl, type Asset, type Filler, type FillerInput, type FillerOwner } from '../lib/api'
+import { api, assetFileUrl, type Asset, type Filler, type FillerInput, type FillerOwner } from '../lib/api'
 
 const inp = 'rounded-lg bg-slate-950 border border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 outline-none'
 const emptyDraft: FillerInput = { name: '', style: 'frosted', assetId: null, audioAssetId: null, durationMode: 'fixed', durationSec: 30 }
@@ -14,6 +14,8 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
   const [editId, setEditId] = useState<number | null>(null)
   const [open, setOpen] = useState(false)
   const [previewId, setPreviewId] = useState<number | null>(null)
+  const [generatingId, setGeneratingId] = useState<number | null>(null)
+  const [genError, setGenError] = useState<string | null>(null)
 
   const ownerKey = owner.channelId ?? owner.timeBlockId
   const refresh = () => api.fillers(owner).then(setFillers).catch(() => {})
@@ -51,6 +53,19 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
     if (previewId === id) setPreviewId(null)
     refresh()
   }
+  async function generate(id: number) {
+    setGeneratingId(id)
+    setGenError(null)
+    try {
+      await api.generateFiller(id)
+      await refresh()
+      setPreviewId(id)
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : 'Generation failed')
+    } finally {
+      setGeneratingId(null)
+    }
+  }
 
   const audioName = (id: number | null) => audioAssets.find((a) => a.id === id)?.name
   const clipName = (id: number | null) => fillerAssets.find((a) => a.id === id)?.name
@@ -61,6 +76,7 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
         <span className="text-sm font-medium">Fillers {hint && <span className="text-xs text-slate-500 font-normal">({hint})</span>}</span>
         {!open && <button onClick={startNew} className="text-xs rounded border border-slate-700 hover:border-indigo-500 hover:text-indigo-300 px-2 py-0.5">+ Add filler</button>}
       </div>
+      {genError && <div className="text-xs text-rose-400 mb-2">{genError}</div>}
 
       {fillers.length > 0 && (
         <div className="space-y-1.5 mb-2">
@@ -74,14 +90,29 @@ export default function FillerManager({ owner, hint }: { owner: FillerOwner; hin
                   {f.style} · {f.durationMode === 'audio' ? 'match audio' : `${f.durationSec}s`}
                   {f.audioAssetId != null && ` · 🎵 ${audioName(f.audioAssetId) ?? 'audio'}`}
                 </span>
-                <button onClick={() => setPreviewId(previewId === f.id ? null : f.id)} className="text-xs text-slate-400 hover:text-indigo-300">{previewId === f.id ? 'Hide' : 'Preview'}</button>
+                {generatingId === f.id ? (
+                  <span className="text-xs text-indigo-300 shrink-0 inline-flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 border-2 border-indigo-400/40 border-t-indigo-300 rounded-full animate-spin" />
+                    Generating…
+                  </span>
+                ) : f.generatedAssetId != null ? (
+                  <>
+                    <button onClick={() => setPreviewId(previewId === f.id ? null : f.id)} className="text-xs text-slate-400 hover:text-indigo-300">{previewId === f.id ? 'Hide' : 'Preview'}</button>
+                    <button onClick={() => generate(f.id)} className="text-xs text-slate-400 hover:text-indigo-300" title="Rebuild after changing settings">Regenerate</button>
+                  </>
+                ) : (
+                  <button onClick={() => generate(f.id)} disabled={generatingId != null} className="text-xs text-indigo-300 hover:text-indigo-200 disabled:opacity-40">Generate</button>
+                )}
                 <button onClick={() => startEdit(f)} className="text-xs text-slate-400 hover:text-indigo-300">Edit</button>
                 <button onClick={() => del(f.id)} className="text-slate-600 hover:text-rose-400" aria-label="Delete">×</button>
               </div>
-              {previewId === f.id && (
+              {generatingId === f.id && (
+                <p className="text-[11px] text-slate-500 mt-1 px-1">Building the clip (frosted can take ~20–40s). It's saved to the Media page when done.</p>
+              )}
+              {previewId === f.id && f.generatedAssetId != null && (
                 <div className="mt-1.5 rounded border border-slate-800 bg-black p-2">
-                  <video key={f.id} controls autoPlay src={fillerClipUrl(f.id)} className="w-full max-h-64 rounded" />
-                  <p className="text-[11px] text-slate-500 mt-1">Building the clip can take ~20–40s the first time (frosted). It plays exactly what viewers will see, at the audio's length.</p>
+                  <video key={f.generatedAssetId} controls src={assetFileUrl(f.generatedAssetId)} className="w-full max-h-64 rounded" />
+                  <p className="text-[11px] text-slate-500 mt-1">This is the exact clip that plays — saved on the Media page as a filler asset. Regenerate after changing the settings.</p>
                 </div>
               )}
             </div>

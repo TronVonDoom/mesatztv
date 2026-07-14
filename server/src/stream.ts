@@ -397,7 +397,7 @@ function fillerArgsAnimated(out: string, dur: number, audioFile?: string): strin
     '-filter_complex',
     `[0:v]hue=H='0.5*sin(2*PI*t/${dur})':s='1.05+0.05*sin(2*PI*t/${dur})',noise=alls=6:allf=t,vignette=PI/4.5,fps=${FPS},format=yuv420p[v]`,
     '-map', '[v]', '-map', '1:a',
-    '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
   ]
 }
@@ -408,7 +408,7 @@ function fillerArgsBasic(out: string, dur: number, audioFile?: string): string[]
     '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${dur}:speed=0.02:c0=0x111827:c1=0x4c1d95:c2=0x1e3a8a:c3=0x0e7490:nb_colors=4`,
     ...audioInput(audioFile, dur, 98, 0.06),
     '-map', '0:v', '-map', '1:a',
-    '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
   ]
 }
@@ -465,7 +465,7 @@ function frostedArgs(out: string, channelLogo: string, mzLogo: string, D: number
     ...audioInput(audioFile, D, 90, 0.04),
     '-filter_complex', fc,
     '-map', '[v]', '-map', '3:a', '-t', String(D),
-    '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-r', String(FPS),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-r', String(FPS),
     '-c:a', 'aac', '-ac', '2', '-ar', '48000', out,
   ]
 }
@@ -480,8 +480,8 @@ function mesatztvLogoFile(): string {
 }
 
 // Bump these when the generators change so persisted clips regenerate.
-const FILLER_VERSION = 3
-const FROSTED_VERSION = 2
+const FILLER_VERSION = 4
+const FROSTED_VERSION = 3
 
 const getSettingVal = async (k: string): Promise<string | undefined> =>
   (await prisma.setting.findUnique({ where: { key: k } }))?.value ?? undefined

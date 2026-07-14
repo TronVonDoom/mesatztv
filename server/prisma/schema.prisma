@@ -145,6 +145,7 @@ model Filler {
   style        String      @default("frosted") // "animated" | "frosted" | "custom"
   assetId      Int? // custom visual (Asset kind "filler"); null for generated styles
   audioAssetId Int? // ambient audio (Asset kind "audio"); baked into generated clips
+  generatedAssetId Int? // the last generated output clip, saved as a Media asset (for preview/reuse)
   durationMode String      @default("fixed") // "fixed" | "audio" (match the audio length)
   durationSec  Int         @default(30)
   order        Int         @default(0)

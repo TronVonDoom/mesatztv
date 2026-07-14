@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import fs from 'node:fs'
+import path from 'node:path'
 import { prisma } from '../db.js'
+import { assetsDir } from '../paths.js'
 import { warmFiller, resolveFillerClipById } from '../stream.js'
 
 export const fillersRouter = Router()
@@ -56,12 +58,31 @@ fillersRouter.delete('/:id', async (req, res) => {
   res.status(204).end()
 })
 
-// GET /api/fillers/:id/clip — build (if needed) and stream the branded clip so
-// the UI can preview exactly what will play.
-fillersRouter.get('/:id/clip', async (req, res) => {
-  const r = await resolveFillerClipById(Number(req.params.id)).catch(() => null)
-  if (!r?.clip || !fs.existsSync(r.clip)) return res.status(404).json({ error: 'Could not generate the preview clip.' })
-  res.type('video/mp4')
-  res.setHeader('Cache-Control', 'no-store')
-  res.sendFile(r.clip)
+// POST /api/fillers/:id/generate — build the branded clip and save it as a Media
+// asset (kind "filler") so it's previewable (static) and reusable. Reuses the
+// filler's previous generated asset on regenerate. Returns the asset.
+fillersRouter.post('/:id/generate', async (req, res) => {
+  const id = Number(req.params.id)
+  const filler = await prisma.filler.findUnique({ where: { id } })
+  if (!filler) return res.status(404).json({ error: 'Filler not found' })
+
+  const r = await resolveFillerClipById(id).catch(() => null)
+  if (!r?.clip || !fs.existsSync(r.clip)) return res.status(500).json({ error: 'Generation failed — check the Logs.' })
+
+  const name = filler.name?.trim() || `${filler.style} filler`
+  const size = fs.statSync(r.clip).size
+
+  // Reuse the existing generated asset if it still exists, else make a new one.
+  let asset = filler.generatedAssetId != null ? await prisma.asset.findUnique({ where: { id: filler.generatedAssetId } }) : null
+  if (asset) {
+    fs.copyFileSync(r.clip, path.join(assetsDir(), asset.filename))
+    asset = await prisma.asset.update({ where: { id: asset.id }, data: { name, sizeBytes: size } })
+  } else {
+    asset = await prisma.asset.create({ data: { name, kind: 'filler', filename: 'pending', mime: 'video/mp4', sizeBytes: size } })
+    const filename = `asset-${asset.id}.mp4`
+    fs.copyFileSync(r.clip, path.join(assetsDir(), filename))
+    asset = await prisma.asset.update({ where: { id: asset.id }, data: { filename } })
+    await prisma.filler.update({ where: { id }, data: { generatedAssetId: asset.id } })
+  }
+  res.json({ asset: { id: asset.id, name: asset.name, kind: asset.kind, mime: asset.mime, sizeBytes: asset.sizeBytes, createdAt: asset.createdAt } })
 })

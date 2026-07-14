@@ -178,6 +178,7 @@ export type Filler = {
   style: 'animated' | 'frosted' | 'custom'
   assetId: number | null
   audioAssetId: number | null
+  generatedAssetId: number | null
   durationMode: 'fixed' | 'audio'
   durationSec: number
   order: number
@@ -190,10 +191,6 @@ export type FillerInput = {
   durationMode: 'fixed' | 'audio'
   durationSec: number
 }
-export function fillerClipUrl(id: number): string {
-  return `/api/fillers/${id}/clip`
-}
-
 export type Collection = {
   id: number
   name: string
@@ -457,6 +454,7 @@ export const api = {
   updateFiller: (id: number, data: FillerInput) =>
     request<Filler>(`/api/fillers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteFiller: (id: number) => request<void>(`/api/fillers/${id}`, { method: 'DELETE' }),
+  generateFiller: (id: number) => request<{ asset: Asset }>(`/api/fillers/${id}/generate`, { method: 'POST' }),
 
   // --- channels ---
   channels: () => request<Channel[]>('/api/channels'),
