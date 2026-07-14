@@ -56,7 +56,7 @@ export default function ChannelEditor() {
   const [profiles, setProfiles] = useState<EncodingProfile[]>([])
   const [chForm, setChForm] = useState<{ name: string; group: string; logoUrl: string; logoId: number | null; profileId: number | null }>({ name: '', group: '', logoUrl: '', logoId: null, profileId: null })
   const [rot, setRot] = useState({ collectionId: '', mode: 'one', count: '1', playbackOrder: 'chronological' })
-  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; logoId: number | null; fillerMode: string }>({
+  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; logoId: number | null; fillerMode: string; startMode: string }>({
     collectionId: '',
     days: [1, 2, 3, 4, 5],
     start: '18:00',
@@ -65,6 +65,7 @@ export default function ChannelEditor() {
     logoUrl: '',
     logoId: null,
     fillerMode: 'none',
+    startMode: 'soft',
   })
   const [editingBlock, setEditingBlock] = useState<number | null>(null)
   const [guideView, setGuideView] = useState<'timeline' | 'list'>('timeline')
@@ -127,7 +128,7 @@ export default function ChannelEditor() {
 
   function resetBlockForm() {
     setEditingBlock(null)
-    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', logoId: null, fillerMode: 'none' })
+    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', logoId: null, fillerMode: 'none', startMode: 'soft' })
   }
 
   // Grid click on an empty slot → start a new block prefilled with that day/time.
@@ -147,6 +148,7 @@ export default function ChannelEditor() {
       logoUrl: b.logoUrl ?? '',
       logoId: b.logoId ?? null,
       fillerMode: b.fillerMode ?? 'none',
+      startMode: b.startMode ?? 'soft',
     })
   }
 
@@ -165,6 +167,7 @@ export default function ChannelEditor() {
       logoUrl: blk.logoUrl || null,
       logoId: blk.logoId,
       fillerMode: blk.fillerMode,
+      startMode: blk.startMode,
     }
     await guard(() =>
       editingBlock ? api.updateBlock(channelId, editingBlock, payload) : api.addBlock(channelId, payload),
@@ -323,6 +326,7 @@ export default function ChannelEditor() {
                     <div className="truncate">{b.collection.name}</div>
                     <div className="text-xs text-slate-500">
                       {formatDays(b.days)} · {minutesToTime(b.startMinute)}–{minutesToTime(b.endMinute)} · {b.playbackOrder}
+                      {b.startMode === 'hard' && ' · ⏱ hard start'}
                       {(b.logoId || b.logoUrl) && ' · 🖼 logo'}
                       {b.fillerMode && b.fillerMode !== 'none' && ` · filler: ${b.fillerMode}`}
                     </div>
@@ -373,6 +377,10 @@ export default function ChannelEditor() {
                 <option value="none">no filler</option>
                 <option value="between">filler between</option>
                 <option value="end">filler at end</option>
+              </select>
+              <select className={input} value={blk.startMode} onChange={(e) => setBlk({ ...blk, startMode: e.target.value })} title="Soft: starts at the next program boundary. Hard: starts exactly on time (fills the gap before it).">
+                <option value="soft">soft start</option>
+                <option value="hard">hard start</option>
               </select>
               <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-3 py-2 text-sm font-medium">{editingBlock ? 'Save' : 'Add'}</button>
               {editingBlock && (

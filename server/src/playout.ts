@@ -39,9 +39,13 @@ function skipToBlockEnd(cursor: Date, block: TimeBlock): Date {
   return end
 }
 
-/** The soonest block start strictly after `cursor` and before `until`, or null. */
-function nextBlockStart(blocks: BlockWithCollection[], cursor: Date, until: Date): Date | null {
-  let best: Date | null = null
+/** The soonest block start strictly after `cursor` and before `until` (and which block), or null. */
+function nextBlockBoundary(
+  blocks: BlockWithCollection[],
+  cursor: Date,
+  until: Date,
+): { start: Date; block: BlockWithCollection } | null {
+  let best: { start: Date; block: BlockWithCollection } | null = null
   for (let offset = 0; offset <= 7; offset++) {
     const day = new Date(cursor)
     day.setDate(day.getDate() + offset)
@@ -50,7 +54,7 @@ function nextBlockStart(blocks: BlockWithCollection[], cursor: Date, until: Date
       if (!b.days.split(',').map((s) => Number(s.trim())).includes(wd)) continue
       const start = new Date(day)
       start.setHours(Math.floor(b.startMinute / 60), b.startMinute % 60, 0, 0)
-      if (start > cursor && start < until && (best === null || start < best)) best = start
+      if (start > cursor && start < until && (best === null || start < best.start)) best = { start, block: b }
     }
   }
   return best
@@ -189,9 +193,24 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
         let pos = state.positions[key] ?? 0
         for (let k = 0; k < take; k++) {
           const mi = items[pos % items.length]
-          pos++
           const dur = mi.durationSec ?? 0
-          if (dur <= 0) continue
+          if (dur <= 0) {
+            pos++
+            continue
+          }
+          // Hard block ahead? If this program would overrun a "hard" block's
+          // start, fill the gap so the block begins exactly on time and defer
+          // this program (don't advance pos) rather than cutting it short.
+          const boundary = nextBlockBoundary(channel.timeBlocks, cursor, until)
+          if (boundary && boundary.block.startMode === 'hard') {
+            const gapMs = boundary.start.getTime() - cursor.getTime()
+            if (dur * 1000 > gapMs) {
+              if (gapMs > 500) pushFiller(new Date(cursor), new Date(boundary.start))
+              cursor = boundary.start
+              break
+            }
+          }
+          pos++
           const stop = new Date(cursor.getTime() + dur * 1000)
           pushProgram(mi.id, new Date(cursor), stop)
           cursor = stop
@@ -203,7 +222,7 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
     } else {
       // No rotation: this is a blocks-only channel. Jump to the next block
       // start (dead air in between), or stop if none is coming up.
-      const next = channel.timeBlocks.length ? nextBlockStart(channel.timeBlocks, cursor, until) : null
+      const next = channel.timeBlocks.length ? nextBlockBoundary(channel.timeBlocks, cursor, until)?.start ?? null : null
       if (next) cursor = next
       else break
     }

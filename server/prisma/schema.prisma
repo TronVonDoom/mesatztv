@@ -227,6 +227,9 @@ model TimeBlock {
   logo          Logo?      @relation(fields: [logoId], references: [id], onDelete: SetNull)
   logoId        Int?
   fillerMode    String     @default("none") // "none" | "between" | "end"
+  // "soft" = block starts at the next program boundary (a rotation item may run
+  // past the start). "hard" = starts exactly on time; the pre-block gap is filled.
+  startMode     String     @default("soft") // "soft" | "hard"
   fillers       Filler[]
 
   @@index([channelId])
