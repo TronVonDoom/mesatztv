@@ -9,7 +9,7 @@ export const fillersRouter = Router()
 
 // Clamp an incoming Filler payload (owner is set separately on create).
 function fillerData(body: Record<string, unknown>) {
-  const style = ['animated', 'frosted', 'custom'].includes(String(body?.style)) ? String(body.style) : 'frosted'
+  const style = ['animated', 'frosted', 'custom', 'logowall', 'pulse', 'retro', 'vintage'].includes(String(body?.style)) ? String(body.style) : 'frosted'
   return {
     name: body?.name ? String(body.name).trim() : null,
     style,

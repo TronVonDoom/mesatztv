@@ -166,12 +166,13 @@ export type CollectionItem = {
 }
 
 export type FillerOwner = { channelId?: number; timeBlockId?: number }
+export type FillerVisual = 'animated' | 'frosted' | 'custom' | 'logowall' | 'pulse' | 'retro' | 'vintage'
 export type Filler = {
   id: number
   channelId: number | null
   timeBlockId: number | null
   name: string | null
-  style: 'animated' | 'frosted' | 'custom'
+  style: FillerVisual
   assetId: number | null
   audioAssetId: number | null
   generatedAssetId: number | null
@@ -181,7 +182,7 @@ export type Filler = {
 }
 export type FillerInput = {
   name?: string | null
-  style: 'animated' | 'frosted' | 'custom'
+  style: FillerVisual
   assetId?: number | null
   audioAssetId?: number | null
   durationMode: 'fixed' | 'audio'

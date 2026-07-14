@@ -444,6 +444,90 @@ export async function generateFiller(out: string, dur = 30, audioFile?: string, 
   }
 }
 
+// ---- Themed filler presets ------------------------------------------------
+
+// Retro test bars: classic SMPTE color bars with soft analog grain + vignette
+// (and the traditional test tone unless audio is chosen).
+function fillerArgsRetro(out: string, dur: number, audioFile?: string): string[] {
+  return [
+    '-y',
+    '-f', 'lavfi', '-i', `smptehdbars=s=${W}x${H}:d=${dur}`,
+    ...audioInput(audioFile, dur, 440, 0.04),
+    '-filter_complex',
+    `[0:v]noise=alls=10:allf=t,vignette=PI/5,fps=${FPS},format=yuv420p[v]`,
+    '-map', '[v]', '-map', '1:a',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
+  ]
+}
+
+// Vintage film: warm sepia drift with heavy grain and a strong vignette.
+function fillerArgsVintage(out: string, dur: number, audioFile?: string): string[] {
+  return [
+    '-y',
+    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${dur}:speed=0.03:c0=0x2b1a0c:c1=0x4a3018:c2=0x1c1108:c3=0x5a4526:nb_colors=4`,
+    ...audioInput(audioFile, dur, 82, 0.05),
+    '-filter_complex',
+    `[0:v]hue=s=0.35,noise=alls=16:allf=t+u,vignette=PI/3.8,fps=${FPS},format=yuv420p[v]`,
+    '-map', '[v]', '-map', '1:a',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest', out,
+  ]
+}
+
+// Logo wall: dim rows of the logo scrolling in alternating directions over a
+// dark gradient, with a sharp logo centered in front. (Frosted's machinery,
+// without the glass blur.)
+function fillerArgsLogowall(out: string, logoFile: string, dur: number, audioFile?: string): string[] {
+  const rowH = 90
+  const cellW = 260
+  const speed = 40
+  const y = (r: number) => r * 180 + 45 // 4 rows across 720
+  const leftX = `x='-mod(t*${speed},${cellW})'`
+  const rightX = `x='mod(t*${speed},${cellW})-${cellW}'`
+  const fc = [
+    `[0:v]format=rgba[bg]`,
+    `[1:v]split=2[wall][fgin]`,
+    `[wall]scale=${cellW}:${rowH}:force_original_aspect_ratio=decrease,pad=${cellW}:${rowH}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,colorchannelmixer=aa=0.16,tile=8x1,split=4[t0][t1][t2][t3]`,
+    `[bg][t0]overlay=${leftX}:y=${y(0)}[o0]`,
+    `[o0][t1]overlay=${rightX}:y=${y(1)}[o1]`,
+    `[o1][t2]overlay=${leftX}:y=${y(2)}[o2]`,
+    `[o2][t3]overlay=${rightX}:y=${y(3)}[o3]`,
+    `[fgin]scale=-1:200:force_original_aspect_ratio=decrease,format=rgba[fg]`,
+    `[o3][fg]overlay=x=(W-w)/2:y=(H-h)/2,fps=${FPS},format=yuv420p[v]`,
+  ].join(';')
+  return [
+    '-y',
+    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${dur}:speed=0.02:c0=0x0a0f1e:c1=0x141b2e:c2=0x0c1526:c3=0x1a2338:nb_colors=4`,
+    '-loop', '1', '-i', logoFile,
+    ...audioInput(audioFile, dur, 104, 0.05),
+    '-filter_complex', fc,
+    '-map', '[v]', '-map', '2:a', '-t', String(dur),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-ac', '2', '-ar', '48000', out,
+  ]
+}
+
+// Logo pulse: the logo centered on a dark gradient whose brightness slowly
+// breathes.
+function fillerArgsPulse(out: string, logoFile: string, dur: number, audioFile?: string): string[] {
+  const fc = [
+    `[0:v]eq=brightness='0.07*sin(2*PI*t/6)':eval=frame,fps=${FPS}[bg]`,
+    `[1:v]scale=-1:220:force_original_aspect_ratio=decrease,format=rgba[fg]`,
+    `[bg][fg]overlay=x=(W-w)/2:y=(H-h)/2,format=yuv420p[v]`,
+  ].join(';')
+  return [
+    '-y',
+    '-f', 'lavfi', '-i', `gradients=s=${W}x${H}:d=${dur}:speed=0.03:c0=0x120a24:c1=0x1e1140:c2=0x0b1530:c3=0x241448:nb_colors=4`,
+    '-loop', '1', '-i', logoFile,
+    ...audioInput(audioFile, dur, 96, 0.05),
+    '-filter_complex', fc,
+    '-map', '[v]', '-map', '2:a', '-t', String(dur),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-ac', '2', '-ar', '48000', out,
+  ]
+}
+
 // Frosted-glass scene: rows of the channel + MeSatzTV logos scrolling opposite
 // ways behind a blurred glass panel, with the channel logo sharp on the left and
 // the MeSatzTV logo on the right in front. Composed per channel (needs its logo).
@@ -573,6 +657,37 @@ async function ensureFrostedFiller(logoFile: string, dur = 30, audioFile?: strin
   return clip
 }
 
+const THEME_VERSION = 1
+// Themed presets besides animated/frosted. "logowall"/"pulse" brand with the
+// active logo; "retro"/"vintage" are logo-free (the live watermark still
+// overlays during playback).
+async function ensureThemedFiller(
+  style: string,
+  logoFile: string | undefined,
+  dur = 30,
+  audioFile?: string,
+  onProgress?: ProgressCb,
+): Promise<string | undefined> {
+  const d = clampDur(dur)
+  const key = createHash('md5')
+    .update(`${style}:${logoFile ? fileKey(logoFile) : ''}:${d}:${fileKey(audioFile)}:v${THEME_VERSION}`)
+    .digest('hex')
+  const out = path.join(dataDir(), `filler-${style}-${key}.mp4`)
+  if (fs.existsSync(out)) return out
+  log('info', 'system', `Generating ${style} filler (${d}s${audioFile ? ' + audio' : ''})…`)
+  const clip = await generateToCache(out, async (tmp) => {
+    let args: string[] | null = null
+    if (style === 'retro') args = fillerArgsRetro(tmp, d, audioFile)
+    else if (style === 'vintage') args = fillerArgsVintage(tmp, d, audioFile)
+    else if (style === 'logowall' && logoFile) args = fillerArgsLogowall(tmp, logoFile, d, audioFile)
+    else if (style === 'pulse' && logoFile) args = fillerArgsPulse(tmp, logoFile, d, audioFile)
+    if (!args) throw new Error(`theme "${style}" unavailable (missing logo?)`)
+    await runFfmpeg(args, onProgress, d)
+  })
+  if (!clip) log('warn', 'system', `${style} filler generation failed — falling back to animated`)
+  return clip
+}
+
 type FillerRow = { style: string; assetId: number | null; audioAssetId: number | null; durationMode: string; durationSec: number }
 
 // Resolve a Filler to a playable clip (+ music overlaid at playback for custom
@@ -594,6 +709,10 @@ async function resolveFillerClip(f: FillerRow, logoFile: string | undefined, onP
   }
   if (f.style === 'frosted' && logoFile) {
     const clip = await ensureFrostedFiller(logoFile, dur, audioFile, onProgress)
+    return { clip: clip ?? (await ensureAnimatedFiller(dur, audioFile, onProgress)) }
+  }
+  if (['logowall', 'pulse', 'retro', 'vintage'].includes(f.style)) {
+    const clip = await ensureThemedFiller(f.style, logoFile, dur, audioFile, onProgress)
     return { clip: clip ?? (await ensureAnimatedFiller(dur, audioFile, onProgress)) }
   }
   return { clip: await ensureAnimatedFiller(dur, audioFile, onProgress) }
