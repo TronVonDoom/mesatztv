@@ -1,6 +1,7 @@
 import type { Collection, MediaItem, TimeBlock } from '@prisma/client'
 import { prisma } from './db.js'
 import { resolveCollection, type PlaybackOrder } from './collections.js'
+import { log } from './logs.js'
 
 const MAX_ITERATIONS = 50000
 
@@ -60,13 +61,30 @@ function nextBlockBoundary(
   return best
 }
 
+// One build per channel at a time. Concurrent builds (e.g. two viewers
+// connecting at once) would each read the same saved positions, double-schedule
+// the same window, and the last writer would clobber the other's state — which
+// loses episode continuity. Serialized, the second build re-reads the advanced
+// cursor and becomes a cheap no-op.
+const buildChain = new Map<number, Promise<unknown>>()
+export function buildPlayout(channelId: number, until: Date): Promise<number> {
+  const prev = buildChain.get(channelId) ?? Promise.resolve()
+  const next = prev.catch(() => {}).then(() => buildPlayoutInner(channelId, until))
+  buildChain.set(channelId, next.catch(() => {}))
+  return next
+}
+
 /**
  * Build (extend) a channel's playout timeline up to `until`. Rotation fills the
  * timeline 24/7; an active time block overrides it. Programs play fully, so
- * block boundaries are honored at program ends (soft dayparting). State persists
- * so shows continue in order across loops and days.
+ * block boundaries are honored at program ends (soft dayparting).
+ *
+ * Continuity: playback positions are keyed by COLLECTION, so a collection
+ * continues from where it left off no matter which block or rotation slot airs
+ * it (five single-day blocks of "Snick" behave like one weekly strip). Legacy
+ * per-block/per-rotation position keys are adopted on first use.
  */
-export async function buildPlayout(channelId: number, until: Date): Promise<number> {
+async function buildPlayoutInner(channelId: number, until: Date): Promise<number> {
   const channel = await prisma.channel.findUnique({
     where: { id: channelId },
     include: {
@@ -87,15 +105,20 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
     ? (JSON.parse(channel.playoutState) as State)
     : { rotationIndex: 0, positions: {} }
 
-  // Cache resolved collection lists for this build pass.
+  // Cache resolved collection lists for this build pass (per collection+order).
   const cache = new Map<string, MediaItem[]>()
-  const listFor = async (key: string, filter: unknown, order: string): Promise<MediaItem[]> => {
-    if (!cache.has(key)) {
-      const seed = channelId * 100000 + (Number(key.slice(1)) || 0)
-      cache.set(key, await resolveCollection(filter as never, order as PlaybackOrder, seed))
+  const listFor = async (collectionId: number, filter: unknown, order: string): Promise<MediaItem[]> => {
+    const ck = `${collectionId}:${order}`
+    if (!cache.has(ck)) {
+      const seed = channelId * 100000 + collectionId
+      cache.set(ck, await resolveCollection(filter as never, order as PlaybackOrder, seed))
     }
-    return cache.get(key)!
+    return cache.get(ck)!
   }
+  // Position for a collection, adopting the pre-refactor per-block/per-rotation
+  // key the first time so nothing restarts at episode 1 on upgrade.
+  const posOf = (key: string, legacyKey: string): number =>
+    state.positions[key] ?? state.positions[legacyKey] ?? 0
 
   const created: {
     mediaItemId: number | null
@@ -118,8 +141,9 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
     const block = activeBlock(channel.timeBlocks, cursor)
 
     if (block) {
-      const key = 'b' + block.id
-      const items = await listFor(key, block.collection, block.playbackOrder)
+      const key = 'c' + block.collectionId
+      const legacy = 'b' + block.id
+      const items = await listFor(block.collectionId, block.collection, block.playbackOrder)
       const blockEnd = skipToBlockEnd(cursor, block)
       const fillerMode = block.fillerMode || 'none'
 
@@ -129,7 +153,7 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
         cursor = blockEnd
       } else if (fillerMode === 'none') {
         // Soft boundary: one program per iteration; may overrun the block end.
-        const pos = state.positions[key] ?? 0
+        const pos = posOf(key, legacy)
         const mi = items[pos % items.length]
         state.positions[key] = pos + 1
         const dur = mi.durationSec ?? 0
@@ -141,7 +165,8 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
       } else {
         // Pack as many programs as fit, then filler to land exactly on blockEnd.
         const availSec = (blockEnd.getTime() - cursor.getTime()) / 1000
-        let pos = state.positions[key] ?? 0
+        let pos = posOf(key, legacy)
+        const startPos = pos
         const fit: { id: number; dur: number }[] = []
         let used = 0
         for (let g = 0; g < 20000; g++) {
@@ -181,16 +206,22 @@ export async function buildPlayout(channelId: number, until: Date): Promise<numb
           }
           if (fillerMode === 'end' && gapSec > 0.5) pushFiller(new Date(c), new Date(blockEnd))
           cursor = blockEnd
+          log(
+            'debug',
+            'playout',
+            `Block airing: ${fit.length} program(s) starting at item ${(startPos % items.length) + 1}/${items.length} (position ${startPos})`,
+          )
         }
       }
     } else if (channel.rotationItems.length > 0) {
       const ri = channel.rotationItems[state.rotationIndex % channel.rotationItems.length]
       state.rotationIndex = state.rotationIndex + 1
-      const key = 'r' + ri.id
-      const items = await listFor(key, ri.collection, ri.playbackOrder)
+      const key = 'c' + ri.collectionId
+      const legacy = 'r' + ri.id
+      const items = await listFor(ri.collectionId, ri.collection, ri.playbackOrder)
       if (items.length > 0) {
         const take = ri.mode === 'multiple' ? Math.max(1, ri.count) : 1
-        let pos = state.positions[key] ?? 0
+        let pos = posOf(key, legacy)
         for (let k = 0; k < take; k++) {
           const mi = items[pos % items.length]
           const dur = mi.durationSec ?? 0
