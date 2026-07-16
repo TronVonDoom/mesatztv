@@ -312,6 +312,52 @@ function detectReadrateBurst(): Promise<boolean> {
   })
 }
 
+// ---- GPU decode (NVDEC) -----------------------------------------------------
+// Encode already runs on nvenc, but decode stays on the CPU unless the command
+// asks for -hwaccel cuda. Whether the GPU can decode a codec depends on the
+// chip (a GTX 970 does H.264 but not HEVC), so probe each codec ONCE by
+// actually decoding a tiny generated sample with the hwaccel forced all the
+// way through (-hwaccel_output_format cuda + hwdownload makes a silent
+// software fallback fail the probe instead of masking it). The real stream
+// command then uses plain -hwaccel cuda, which soft-falls-back to CPU decode
+// on any oddball file rather than dying.
+const SAMPLE_ENCODERS: Record<string, string> = { h264: 'libx264', hevc: 'libx265' }
+const nvdecCache = new Map<string, Promise<boolean>>()
+function canNvdecCodec(codec: string): Promise<boolean> {
+  const hit = nvdecCache.get(codec)
+  if (hit) return hit
+  const probe = (async () => {
+    const encoder = SAMPLE_ENCODERS[codec]
+    if (!encoder) return false // rare codec — leave it on the CPU
+    const sample = path.join(dataDir(), `probe-nvdec-${codec}.mp4`)
+    try {
+      await runFfmpeg(['-y', '-f', 'lavfi', '-i', 'color=c=black:s=320x180:r=10:d=0.3', '-c:v', encoder, '-pix_fmt', 'yuv420p', sample])
+      await new Promise<void>((resolve, reject) => {
+        const d = spawn('ffmpeg', [
+          '-hide_banner', '-v', 'error',
+          '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda',
+          '-i', sample,
+          '-vf', 'hwdownload,format=nv12',
+          '-f', 'null', '-',
+        ])
+        let err = ''
+        d.stderr?.on('data', (x) => (err += x))
+        d.on('error', reject)
+        d.on('close', (c) => (c === 0 ? resolve() : reject(new Error(err.slice(-300) || `exit ${c}`))))
+      })
+      log('info', 'ffmpeg', `GPU decode (NVDEC) available for ${codec}`)
+      return true
+    } catch (e) {
+      log('info', 'ffmpeg', `GPU decode unavailable for ${codec} — decoding on CPU`, String(e).slice(0, 300))
+      return false
+    } finally {
+      fs.rmSync(sample, { force: true })
+    }
+  })()
+  nvdecCache.set(codec, probe)
+  return probe
+}
+
 // Burned-in text (coming-up-next, schedule filler) needs drawtext, which is
 // only present when ffmpeg was built with libfreetype, plus a font file on
 // disk. Both are detected ONCE; if either is missing, text overlays are
@@ -405,6 +451,10 @@ type Segment = {
   // disappear (i.e. next to filler that isn't showing it). 0 = no ramp.
   fadeInSec: number
   fadeOutSec: number
+  // Decode this input on the GPU (-hwaccel cuda). Set only when the probe says
+  // the GPU handles this file's codec; ffmpeg still soft-falls-back to CPU
+  // decode if a particular file trips it up.
+  hwDecode?: boolean
 }
 
 // Sample aspect ratio per file. The scanner records coded dimensions, but
@@ -656,6 +706,9 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamPro
   // fall back to a hard cut otherwise rather than risk a stream that never ends.
   const fading = useWatermark && wantsFade(wm, seg) && (seg.durationSec ?? 0) > 0
   const a: string[] = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-fflags', '+genpts']
+  // GPU decode: frames come back to system memory (no -hwaccel_output_format),
+  // so the CPU filter graph below works unchanged — only the decode moves.
+  if (seg.hwDecode) a.push('-hwaccel', 'cuda')
   if (seg.offsetSec > 0.1) a.push('-ss', seg.offsetSec.toFixed(3))
   if (seg.loop) a.push('-stream_loop', '-1')
   // Deliberately NOT -re: the outer concat process meters the session at real
@@ -1583,7 +1636,13 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
           }
           const genMs = Date.now() - genStart
           if (genMs > 500) log('warn', 'system', `Channel ${channelNumber}: filler resolve blocked ${genMs}ms (should be pre-warmed)`)
-          if (clip && segDur > 0.3) seg = { filePath: clip, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, wmEpochSec, mediaWidth: W, mediaHeight: H, musicPath: music, isFiller: true, fadeInSec: 0, fadeOutSec: 0 }
+          // Generated filler is always our own H.264; custom clips are unknown,
+          // so only offer those to the GPU when they're our generated files.
+          const fillerHw =
+            enc === 'h264_nvenc' && clip && path.basename(clip).startsWith('filler-')
+              ? await canNvdecCodec('h264')
+              : false
+          if (clip && segDur > 0.3) seg = { filePath: clip, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, wmEpochSec, mediaWidth: W, mediaHeight: H, musicPath: music, isFiller: true, fadeInSec: 0, fadeOutSec: 0, hwDecode: fillerHw }
           label = `filler (${Math.round(segDur)}s)${music ? ' +music' : ''}${src}`
           if (!clip) log('error', 'stream', `Channel ${channelNumber}: no filler clip — a ${Math.round(segDur)}s gap will play black`)
         } else if (fs.existsSync(mi.path) && offset >= (mi.durationSec ?? Infinity) - 0.2) {
@@ -1597,7 +1656,10 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
           // watermark cares — skip the probe otherwise.
           const sar = wm.constrainToMedia && wm.mode !== 'none' && logo ? await probeSar(mi.path) : 1
           const dispW = Math.round((mi.width ?? W) * sar)
-          seg = { filePath: mi.path, offsetSec: offset, loop: false, durationSec: segDur, hasAudio: !!mi.audioCodec, logo, wmEpochSec, mediaWidth: dispW, mediaHeight: mi.height ?? H, isFiller: false, fadeInSec, fadeOutSec }
+          // Decode on the GPU when the probe says this codec is supported
+          // there (per-chip: e.g. a GTX 970 does h264 but not hevc).
+          const hwDecode = enc === 'h264_nvenc' && mi.videoCodec ? await canNvdecCodec(mi.videoCodec.toLowerCase()) : false
+          seg = { filePath: mi.path, offsetSec: offset, loop: false, durationSec: segDur, hasAudio: !!mi.audioCodec, logo, wmEpochSec, mediaWidth: dispW, mediaHeight: mi.height ?? H, isFiller: false, fadeInSec, fadeOutSec, hwDecode }
           label = mi.showTitle
             ? `${mi.showTitle}${mi.season != null && mi.episode != null ? ` S${String(mi.season).padStart(2, '0')}E${String(mi.episode).padStart(2, '0')}` : ''}${mi.title ? ` — ${mi.title}` : ''}`
             : mi.title
@@ -1661,7 +1723,7 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
           'info',
           'stream',
           `Ch ${channelNumber} ▶ ${label}${offset > 1 ? ` (resuming at ${Math.round(offset)}s)` : ''}`,
-          `source ${seg.mediaWidth}x${seg.mediaHeight}, logo ${active.id != null ? '#' + active.id : active.raw ? 'url' : 'none'}, ${wmDesc}`,
+          `source ${seg.mediaWidth}x${seg.mediaHeight}, decode ${seg.hwDecode ? 'GPU (nvdec)' : 'CPU'}, logo ${active.id != null ? '#' + active.id : active.raw ? 'url' : 'none'}, ${wmDesc}`,
         )
         log('debug', 'ffmpeg', `Ch ${channelNumber} ffmpeg command`, 'ffmpeg ' + args.join(' '))
         res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-cache, no-store' })
