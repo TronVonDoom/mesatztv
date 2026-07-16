@@ -234,12 +234,19 @@ function encoderArgs(enc: string, p: StreamProfile): string[] {
         : mbps(q.bitrate * 2)
   const preset = (fallback: string) => (p.preset !== 'auto' && PRESETS[enc]?.includes(p.preset) ? p.preset : fallback)
 
+  // No B-frames. They make DTS run ahead of PTS by the reorder delay (measured
+  // at 200ms on nvenc), and each segment is a separate encoder whose output we
+  // splice with -output_ts_offset — so the next segment's first DTS lands
+  // *before* the previous segment's last one, and players drop video at the
+  // seam and never recover. Costs a little compression; buys a working splice.
+  const noBFrames = ['-bf', '0']
+
   if (enc === 'h264_nvenc') {
-    return ['-c:v', 'h264_nvenc', '-preset', preset('p4'), '-rc', 'vbr', '-b:v', bv, '-maxrate', maxrate, '-bufsize', bufsize, '-g', g, '-pix_fmt', 'yuv420p']
+    return ['-c:v', 'h264_nvenc', '-preset', preset('p4'), '-rc', 'vbr', '-b:v', bv, '-maxrate', maxrate, '-bufsize', bufsize, '-g', g, ...noBFrames, '-pix_fmt', 'yuv420p']
   }
   // libx264 uses CRF unless an explicit bitrate asks for rate control.
   const rate = p.videoBitrateK > 0 ? ['-b:v', bv, '-maxrate', maxrate] : ['-crf', q.crf, '-maxrate', maxrate]
-  return ['-c:v', 'libx264', '-preset', preset('veryfast'), ...rate, '-bufsize', bufsize, '-g', g, '-pix_fmt', 'yuv420p']
+  return ['-c:v', 'libx264', '-preset', preset('veryfast'), ...rate, '-bufsize', bufsize, '-g', g, ...noBFrames, '-pix_fmt', 'yuv420p']
 }
 
 type Segment = {
@@ -480,9 +487,12 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamPro
   }
   const aIn = audioIdx >= 0 ? `${audioIdx}:a:0` : '0:a:0'
   const layout = p.audioChannels === 6 ? '5.1' : 'stereo'
-  // Single-pass loudnorm — evens out the jump between a 1970s sitcom and a
-  // modern show. Measured on the fly, so it can't be as exact as a two-pass run.
-  const loud = p.normalizeLoudness ? 'loudnorm=I=-16:TP=-1.5:LRA=11,' : ''
+  // Evens out the jump between a 1970s sitcom and a modern show. dynaudnorm,
+  // not loudnorm: loudnorm looks 3s ahead, and since the muxer can't interleave
+  // without audio, that became 3s of dead air at every single transition
+  // (measured: 1.0s -> 3.0s to first byte). dynaudnorm adapts continuously and
+  // costs nothing at startup — less exact than R128, but this is live TV.
+  const loud = p.normalizeLoudness ? 'dynaudnorm=f=150:g=5,' : ''
   const af = `[${aIn}]asetpts=PTS-STARTPTS,${loud}aresample=48000,aformat=channel_layouts=${layout}[a]`
 
   a.push('-filter_complex', `${vf};${af}`, '-map', '[v]', '-map', '[a]')
