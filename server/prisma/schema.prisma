@@ -39,6 +39,15 @@ model EncodingProfile {
   quality      String    @default("medium") // "low" | "medium" | "high"
   hwaccel      String    @default("auto") // "auto" | "nvidia" | "cpu"
   audioBitrate Int       @default(192) // kbps
+  // Encoder tuning. Zero means "derive it" so a profile can stay simple.
+  preset            String  @default("auto") // "auto" | encoder-specific speed preset
+  videoBitrateK     Int     @default(0) // 0 = derive from quality
+  videoBufferK      Int     @default(0) // 0 = derive from bitrate
+  scalingMode       String  @default("pad") // "pad" | "stretch" | "crop"
+  deinterlace       Boolean @default(true) // yadif, but only on frames flagged interlaced
+  threads           Int     @default(0) // 0 = let ffmpeg decide
+  audioChannels     Int     @default(2)
+  normalizeLoudness Boolean @default(false)
   createdAt    DateTime  @default(now())
   channels     Channel[]
 }

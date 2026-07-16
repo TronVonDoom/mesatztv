@@ -285,6 +285,14 @@ export type EncodingProfile = {
   quality: 'low' | 'medium' | 'high'
   hwaccel: 'auto' | 'nvidia' | 'cpu'
   audioBitrate: number
+  preset: string
+  videoBitrateK: number
+  videoBufferK: number
+  scalingMode: 'pad' | 'stretch' | 'crop'
+  deinterlace: boolean
+  threads: number
+  audioChannels: number
+  normalizeLoudness: boolean
 }
 export type ProfileFields = Omit<EncodingProfile, 'id' | 'name'>
 export type ProfileInput = { name: string } & ProfileFields

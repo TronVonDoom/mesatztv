@@ -14,6 +14,14 @@ function sanitize(body: Record<string, unknown>) {
     quality: String(body.quality),
     hwaccel: String(body.hwaccel),
     audioBitrate: Number(body.audioBitrate),
+    preset: body.preset == null ? null : String(body.preset),
+    videoBitrateK: Number(body.videoBitrateK),
+    videoBufferK: Number(body.videoBufferK),
+    scalingMode: body.scalingMode == null ? null : String(body.scalingMode),
+    deinterlace: body.deinterlace == null ? null : !!body.deinterlace,
+    threads: Number(body.threads),
+    audioChannels: Number(body.audioChannels),
+    normalizeLoudness: !!body.normalizeLoudness,
   })
 }
 

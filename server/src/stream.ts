@@ -15,6 +15,16 @@ const H = 720
 const FPS = 30
 
 // Resolved per-channel output settings the stream pipeline builds ffmpeg from.
+export type ScalingMode = 'pad' | 'stretch' | 'crop'
+export const SCALING_MODES: ScalingMode[] = ['pad', 'stretch', 'crop']
+
+// Encoder speed presets, per encoder. "auto" keeps our own sensible default.
+export const PRESETS: Record<string, string[]> = {
+  libx264: ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower'],
+  h264_nvenc: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'],
+}
+const ALL_PRESETS = new Set(Object.values(PRESETS).flat())
+
 export type StreamProfile = {
   width: number
   height: number
@@ -22,6 +32,14 @@ export type StreamProfile = {
   quality: 'low' | 'medium' | 'high'
   hwaccel: 'auto' | 'nvidia' | 'cpu'
   audioBitrate: number // kbps
+  preset: string // "auto" or an encoder-specific preset
+  videoBitrateK: number // 0 = derive from quality
+  videoBufferK: number // 0 = derive from bitrate
+  scalingMode: ScalingMode
+  deinterlace: boolean
+  threads: number // 0 = ffmpeg default
+  audioChannels: number
+  normalizeLoudness: boolean
 }
 export const DEFAULT_PROFILE: StreamProfile = {
   width: 1280,
@@ -30,6 +48,14 @@ export const DEFAULT_PROFILE: StreamProfile = {
   quality: 'medium',
   hwaccel: 'auto',
   audioBitrate: 192,
+  preset: 'auto',
+  videoBitrateK: 0,
+  videoBufferK: 0,
+  scalingMode: 'pad',
+  deinterlace: true,
+  threads: 0,
+  audioChannels: 2,
+  normalizeLoudness: false,
 }
 
 type ProfileRow = {
@@ -39,6 +65,14 @@ type ProfileRow = {
   quality: string
   hwaccel: string
   audioBitrate: number
+  preset?: string | null
+  videoBitrateK?: number | null
+  videoBufferK?: number | null
+  scalingMode?: string | null
+  deinterlace?: boolean | null
+  threads?: number | null
+  audioChannels?: number | null
+  normalizeLoudness?: boolean | null
 } | null
 
 /** Clamp a DB profile row (or null) into a valid StreamProfile. */
@@ -51,6 +85,9 @@ export function resolveProfile(p: ProfileRow): StreamProfile {
     const v = Math.round(Number(n) || d)
     return Math.max(160, v - (v % 2))
   }
+  const int = (v: unknown, def: number, lo: number, hi: number) =>
+    Math.max(lo, Math.min(hi, Math.round(Number(v) || def)))
+  const preset = p.preset && ALL_PRESETS.has(p.preset) ? p.preset : 'auto'
   return {
     width: even(p.width, 1280),
     height: even(p.height, 720),
@@ -58,6 +95,15 @@ export function resolveProfile(p: ProfileRow): StreamProfile {
     quality,
     hwaccel,
     audioBitrate: Math.max(32, Math.min(512, Math.round(Number(p.audioBitrate) || 192))),
+    preset,
+    videoBitrateK: int(p.videoBitrateK, 0, 0, 100_000),
+    videoBufferK: int(p.videoBufferK, 0, 0, 200_000),
+    scalingMode: SCALING_MODES.includes(p.scalingMode as ScalingMode) ? (p.scalingMode as ScalingMode) : 'pad',
+    deinterlace: p.deinterlace ?? true,
+    threads: int(p.threads, 0, 0, 64),
+    // Stereo or 5.1; anything else risks clients that can't decode it.
+    audioChannels: p.audioChannels === 6 ? 6 : 2,
+    normalizeLoudness: !!p.normalizeLoudness,
   }
 }
 
@@ -169,10 +215,24 @@ function encoderArgs(enc: string, p: StreamProfile): string[] {
   const q = QUALITY[p.quality]
   const scale = (p.width * p.height) / (1280 * 720) // relative to 720p
   const mbps = (n: number) => `${(Math.max(0.5, n) * Math.max(1, Math.min(2.5, scale))).toFixed(1)}M`
+  // An explicit bitrate wins over the quality ladder; buffer defaults to 2x it.
+  const kbps = (n: number) => `${Math.max(1, Math.round(n))}k`
+  const bv = p.videoBitrateK > 0 ? kbps(p.videoBitrateK) : mbps(q.bitrate)
+  const maxrate = p.videoBitrateK > 0 ? kbps(p.videoBitrateK * 1.6) : mbps(q.bitrate * 1.6)
+  const bufsize =
+    p.videoBufferK > 0
+      ? kbps(p.videoBufferK)
+      : p.videoBitrateK > 0
+        ? kbps(p.videoBitrateK * 2)
+        : mbps(q.bitrate * 2)
+  const preset = (fallback: string) => (p.preset !== 'auto' && PRESETS[enc]?.includes(p.preset) ? p.preset : fallback)
+
   if (enc === 'h264_nvenc') {
-    return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-b:v', mbps(q.bitrate), '-maxrate', mbps(q.bitrate * 1.6), '-bufsize', mbps(q.bitrate * 2), '-g', g, '-pix_fmt', 'yuv420p']
+    return ['-c:v', 'h264_nvenc', '-preset', preset('p4'), '-rc', 'vbr', '-b:v', bv, '-maxrate', maxrate, '-bufsize', bufsize, '-g', g, '-pix_fmt', 'yuv420p']
   }
-  return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', q.crf, '-maxrate', mbps(q.bitrate * 1.6), '-bufsize', mbps(q.bitrate * 2.4), '-g', g, '-pix_fmt', 'yuv420p']
+  // libx264 uses CRF unless an explicit bitrate asks for rate control.
+  const rate = p.videoBitrateK > 0 ? ['-b:v', bv, '-maxrate', maxrate] : ['-crf', q.crf, '-maxrate', maxrate]
+  return ['-c:v', 'libx264', '-preset', preset('veryfast'), ...rate, '-bufsize', bufsize, '-g', g, '-pix_fmt', 'yuv420p']
 }
 
 type Segment = {
@@ -353,24 +413,41 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamPro
   }
   if (seg.durationSec) a.push('-t', seg.durationSec.toFixed(3))
 
+  // Deinterlace before scaling, or the comb artifacts get resampled into the
+  // output. `deint=interlaced` only touches frames actually flagged interlaced,
+  // so progressive material passes through untouched — that's the "auto" part.
+  const deint = p.deinterlace ? 'yadif=deint=interlaced,' : ''
   // De-anamorphize (scale=iw*sar:ih) so non-square-pixel sources (e.g. 720x480
-  // DVD content) aren't horizontally stretched, then fit+letterbox to the profile
+  // DVD content) aren't horizontally stretched, then fit to the profile
   // resolution. Reset per-segment timestamps so concatenated segments stay in sync.
-  const base = `[0:v]scale=iw*sar:ih,scale=${p.width}:${p.height}:force_original_aspect_ratio=decrease,pad=${p.width}:${p.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${p.fps},format=yuv420p,setpts=PTS-STARTPTS`
+  const fit =
+    p.scalingMode === 'stretch'
+      ? `scale=${p.width}:${p.height}`
+      : p.scalingMode === 'crop'
+        ? `scale=${p.width}:${p.height}:force_original_aspect_ratio=increase,crop=${p.width}:${p.height}`
+        : `scale=${p.width}:${p.height}:force_original_aspect_ratio=decrease,pad=${p.width}:${p.height}:(ow-iw)/2:(oh-ih)/2`
+  const base = `[0:v]${deint}scale=iw*sar:ih,${fit},setsar=1,fps=${p.fps},format=yuv420p,setpts=PTS-STARTPTS`
   let vf: string
   if (useWatermark) {
-    const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, wm.constrainToMedia, p.width, p.height)
+    // Only "pad" leaves bars to stay clear of; stretch and crop fill the canvas.
+    const constrain = wm.constrainToMedia && p.scalingMode === 'pad'
+    const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, constrain, p.width, p.height)
     const wg = watermarkGraph(wm, logoIdx, seg.wmEpochSec, rect, p.fps, fading)
     vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}${wg.overlayExtra}[v]`
   } else {
     vf = `${base}[v]`
   }
   const aIn = audioIdx >= 0 ? `${audioIdx}:a:0` : '0:a:0'
-  const af = `[${aIn}]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a]`
+  const layout = p.audioChannels === 6 ? '5.1' : 'stereo'
+  // Single-pass loudnorm — evens out the jump between a 1970s sitcom and a
+  // modern show. Measured on the fly, so it can't be as exact as a two-pass run.
+  const loud = p.normalizeLoudness ? 'loudnorm=I=-16:TP=-1.5:LRA=11,' : ''
+  const af = `[${aIn}]asetpts=PTS-STARTPTS,${loud}aresample=48000,aformat=channel_layouts=${layout}[a]`
 
   a.push('-filter_complex', `${vf};${af}`, '-map', '[v]', '-map', '[a]')
+  if (p.threads > 0) a.push('-threads', String(p.threads))
   a.push(...encoderArgs(enc, p))
-  a.push('-c:a', 'aac', '-ar', '48000', '-ac', '2', '-b:a', `${p.audioBitrate}k`)
+  a.push('-c:a', 'aac', '-ar', '48000', '-ac', String(p.audioChannels), '-b:a', `${p.audioBitrate}k`)
   // Continuous timestamps: each segment's frames start at 0 (setpts above), and
   // -output_ts_offset shifts them to follow the previous segment so the muxed
   // MPEG-TS never jumps backwards. Backwards PTS at a boundary is what makes
