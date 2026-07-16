@@ -19,3 +19,11 @@ export function assetsDir(): string {
   fs.mkdirSync(d, { recursive: true })
   return d
 }
+
+// Downloaded TMDB artwork, so guide clients fetch posters from us on the LAN
+// rather than needing their own route to the internet.
+export function tmdbCacheDir(): string {
+  const d = path.join(dataDir(), 'tmdb-cache')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}

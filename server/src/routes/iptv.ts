@@ -95,7 +95,7 @@ iptvRouter.get('/xmltv.xml', async (req, res) => {
       titles.add(m.showTitle)
     }
   }
-  const showPosters = new Map<number, Map<string, string>>()
+  const showHasPoster = new Map<number, Set<string>>()
   if (wantedShows.size) {
     const shows = await prisma.show.findMany({
       where: {
@@ -108,24 +108,23 @@ iptvRouter.get('/xmltv.xml', async (req, res) => {
     })
     for (const s of shows) {
       if (!s.tmdbPosterPath) continue
-      let byTitle = showPosters.get(s.libraryId)
-      if (!byTitle) showPosters.set(s.libraryId, (byTitle = new Map()))
-      byTitle.set(s.title, s.tmdbPosterPath)
+      let titles = showHasPoster.get(s.libraryId)
+      if (!titles) showHasPoster.set(s.libraryId, (titles = new Set()))
+      titles.add(s.title)
     }
   }
 
-  const tmdbImage = (p: string) => `https://image.tmdb.org/t/p/w500${p}`
-
+  // Always point at our own artwork route rather than image.tmdb.org: guide
+  // clients fetch these themselves and may have no internet access, so the
+  // server downloads and caches TMDB art instead. Only emit an icon when we
+  // know something is actually there, so clients aren't sent to a 404.
   function programmeIcon(m: (typeof items)[number]['mediaItem']): string | null {
     if (!m) return null
     if (m.type === 'episode' && m.showTitle) {
-      if (m.showPosterPath) return `${base}/api/artwork/${m.id}?type=show`
-      const tmdb = showPosters.get(m.libraryId)?.get(m.showTitle)
-      if (tmdb) return tmdbImage(tmdb)
+      const hasArt = m.showPosterPath || showHasPoster.get(m.libraryId)?.has(m.showTitle)
+      return hasArt ? `${base}/api/artwork/${m.id}?type=show` : null
     }
-    if (m.posterPath) return `${base}/api/artwork/${m.id}?type=poster`
-    if (m.tmdbPosterPath) return tmdbImage(m.tmdbPosterPath)
-    return null
+    return m.posterPath || m.tmdbPosterPath ? `${base}/api/artwork/${m.id}?type=poster` : null
   }
 
   let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="MeSatzTV">\n'
