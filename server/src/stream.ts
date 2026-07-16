@@ -116,7 +116,12 @@ export type WatermarkConfig = {
   opacityPercent: number
   frequencyMinutes: number
   durationSeconds: number
+  // One fade length, used wherever the logo appears or disappears: the
+  // intermittent cycle, and the hand-off to and from filler.
   fadeSeconds: number
+  // Filler usually *is* the logo (logo wall, pulse, frosted), so a corner bug on
+  // top is a second one. Off by default.
+  showOnFiller: boolean
   // When true, size/position the logo relative to the actual media rectangle
   // (respecting the source aspect, e.g. 4:3 pillarboxed content) instead of the
   // full 1280x720 output canvas — so the watermark stays over the picture.
@@ -133,6 +138,7 @@ export const DEFAULT_WATERMARK: WatermarkConfig = {
   frequencyMinutes: 5,
   durationSeconds: 30,
   fadeSeconds: 1,
+  showOnFiller: false,
   constrainToMedia: false,
 }
 
@@ -161,6 +167,7 @@ export function sanitizeWatermark(input: unknown): WatermarkConfig {
     frequencyMinutes: Math.max(1, Number(wm.frequencyMinutes) || 5),
     durationSeconds: Math.max(1, Number(wm.durationSeconds) || 30),
     fadeSeconds: Math.max(0, Number(wm.fadeSeconds) || 0),
+    showOnFiller: !!wm.showOnFiller,
     constrainToMedia: !!wm.constrainToMedia,
   }
 }
@@ -247,6 +254,11 @@ type Segment = {
   mediaHeight: number
   musicPath?: string // looped ambient audio (filler only) — overrides clip audio
   tsOffsetSec: number // cumulative output timestamp offset (keeps PTS monotonic across segments)
+  isFiller: boolean
+  // Ramp the watermark up/down across a boundary where it is about to appear or
+  // disappear (i.e. next to filler that isn't showing it). 0 = no ramp.
+  fadeInSec: number
+  fadeOutSec: number
 }
 
 // Sample aspect ratio per file. The scanner records coded dimensions, but
@@ -308,9 +320,14 @@ function mediaRect(mediaW: number, mediaH: number, constrain: boolean, cw: numbe
 // every `frequencyMinutes`, aligned to wall-clock time so every viewer sees it
 // at the same moment. `wmEpochSec` is the segment's absolute start time in
 // seconds; `t` inside the expression is the segment-relative time.
-/** Whether the watermark needs a per-frame alpha ramp (vs a static alpha). */
-function wantsFade(wm: WatermarkConfig): boolean {
-  return wm.mode === 'intermittent' && Math.min(wm.fadeSeconds, wm.durationSeconds / 2) > 0
+/**
+ * Whether the watermark needs a per-frame alpha ramp (vs a cheap static alpha):
+ * either the intermittent cycle fades, or it has to ramp across a filler edge.
+ */
+function wantsFade(wm: WatermarkConfig, seg?: Pick<Segment, 'fadeInSec' | 'fadeOutSec'>): boolean {
+  const cycleFades = wm.mode === 'intermittent' && Math.min(wm.fadeSeconds, wm.durationSeconds / 2) > 0
+  const edgeFades = (seg?.fadeInSec ?? 0) > 0 || (seg?.fadeOutSec ?? 0) > 0
+  return cycleFades || edgeFades
 }
 
 function watermarkGraph(
@@ -320,6 +337,9 @@ function watermarkGraph(
   rect: Rect,
   fps: number,
   fading: boolean,
+  fadeInSec: number,
+  fadeOutSec: number,
+  totalFrames: number,
 ): { logoChain: string; overlayPos: string; overlayExtra: string } {
   const LW = Math.max(2, Math.round((rect.mw * wm.widthPercent) / 100))
   const MX = Math.round((rect.mw * wm.horizontalMarginPercent) / 100)
@@ -339,53 +359,70 @@ function watermarkGraph(
   const BO = opacity.toFixed(3)
   const scale = `[${logoIdx}:v]scale=${LW}:-2`
 
-  if (wm.mode !== 'intermittent') {
-    // Always-on: static alpha via colorchannelmixer — cheap and reliable.
-    return { logoChain: `${scale},format=rgba,colorchannelmixer=aa=${BO}[lg]`, overlayPos, overlayExtra: '' }
-  }
-
   const P = Math.max(1, Math.round(wm.frequencyMinutes * 60)) // period, seconds
   const D = Math.max(1, Math.round(wm.durationSeconds)) // visible window, seconds
-  const fade = Math.max(0, Math.min(wm.fadeSeconds, D / 2)) // can't fade longer than half the window
 
   if (!fading) {
-    // Hard cut: gate the overlay on a wall-clock-aligned window.
+    // Static alpha via colorchannelmixer — cheap and reliable. Intermittent
+    // still gates on a wall-clock-aligned window; permanent just stays on.
     return {
       logoChain: `${scale},format=rgba,colorchannelmixer=aa=${BO}[lg]`,
       overlayPos,
       // Single-quoted so the commas aren't parsed as filtergraph separators.
-      overlayExtra: `:enable='lt(mod(t+${wmEpochSec.toFixed(1)},${P}),${D})'`,
+      overlayExtra:
+        wm.mode === 'intermittent' ? `:enable='lt(mod(t+${wmEpochSec.toFixed(1)},${P}),${D})'` : '',
     }
   }
 
-  // Fading: ramp the logo's alpha in and out around the visible window. This
-  // needs a per-frame alpha, which `enable` (a hard on/off) can't express and
+  // Per-frame alpha, which `enable` (a hard on/off) can't express and
   // colorchannelmixer (one static value) can't either — so drive it with geq.
   //
   // Two constraints, both learned the hard way:
   //  - geq must get PLANAR rgba (gbrap); on packed rgba it silently corrupts.
   //  - geq's `T` is broken in ffmpeg 8.1, but frame number `N` works, so the
-  //    envelope is expressed in frames.
-  // Phase-shift by the segment's wall-clock start so the cycle stays continuous
-  // across segment boundaries and every viewer sees the logo at the same moment.
-  const PF = Math.max(1, Math.round(P * fps))
-  const DF = Math.max(1, Math.round(D * fps))
-  const FF = Math.max(1, Math.round(fade * fps))
-  const PH = Math.round(wmEpochSec * fps) % PF
-  const n = `mod(N+${PH},${PF})` // frames since the window opened
-  // Ramp up over FF, hold, ramp down to zero at DF, stay dark until the period wraps.
-  const env = `clip(min(${n}/${FF},(${DF}-${n})/${FF}),0,1)`
+  //    envelope is expressed in frames. N counts from this segment's first
+  //    frame, which is what the edge ramps below want anyway.
+  const terms: string[] = []
+
+  if (wm.mode === 'intermittent') {
+    const fade = Math.max(0, Math.min(wm.fadeSeconds, D / 2)) // can't fade longer than half the window
+    const PF = Math.max(1, Math.round(P * fps))
+    const DF = Math.max(1, Math.round(D * fps))
+    // Phase-shift by the segment's wall-clock start so the cycle stays
+    // continuous across segments and every viewer sees it at the same moment.
+    const PH = Math.round(wmEpochSec * fps) % PF
+    const n = `mod(N+${PH},${PF})` // frames since the window opened
+    if (fade > 0) {
+      const FF = Math.max(1, Math.round(fade * fps))
+      // Ramp up over FF, hold, ramp down to zero at DF, dark until the period wraps.
+      terms.push(`clip(min(${n}/${FF},(${DF}-${n})/${FF}),0,1)`)
+    } else {
+      terms.push(`lt(${n},${DF})`) // hard on/off window
+    }
+  }
+
+  // Edge ramps for a boundary with filler that isn't showing the logo.
+  if (fadeInSec > 0) {
+    terms.push(`clip(N/${Math.max(1, Math.round(fadeInSec * fps))},0,1)`)
+  }
+  if (fadeOutSec > 0 && totalFrames > 0) {
+    terms.push(`clip((${totalFrames}-N)/${Math.max(1, Math.round(fadeOutSec * fps))},0,1)`)
+  }
+
+  const env = terms.length ? terms.join('*') : '1'
   const alpha = `${(opacity * 255).toFixed(1)}*${env}`
   const logoChain = `${scale},format=gbrap,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${alpha}'[lg]`
   return { logoChain, overlayPos, overlayExtra: '' }
 }
 
 function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamProfile): string[] {
-  const useWatermark = wm.mode !== 'none' && !!seg.logo
+  // Filler is usually built out of the logo already, so the bug goes on top of
+  // it only if explicitly asked for.
+  const useWatermark = wm.mode !== 'none' && !!seg.logo && (!seg.isFiller || wm.showOnFiller)
   // Fading loops the still logo into an endless stream, which only terminates
   // because `-t` caps the output — so require a known positive duration and
   // fall back to a hard cut otherwise rather than risk a stream that never ends.
-  const fading = useWatermark && wantsFade(wm) && (seg.durationSec ?? 0) > 0
+  const fading = useWatermark && wantsFade(wm, seg) && (seg.durationSec ?? 0) > 0
   const a: string[] = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-fflags', '+genpts']
   if (seg.offsetSec > 0.1) a.push('-ss', seg.offsetSec.toFixed(3))
   if (seg.loop) a.push('-stream_loop', '-1')
@@ -432,7 +469,8 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamPro
     // Only "pad" leaves bars to stay clear of; stretch and crop fill the canvas.
     const constrain = wm.constrainToMedia && p.scalingMode === 'pad'
     const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, constrain, p.width, p.height)
-    const wg = watermarkGraph(wm, logoIdx, seg.wmEpochSec, rect, p.fps, fading)
+    const totalFrames = Math.round((seg.durationSec ?? 0) * p.fps)
+    const wg = watermarkGraph(wm, logoIdx, seg.wmEpochSec, rect, p.fps, fading, seg.fadeInSec, seg.fadeOutSec, totalFrames)
     vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}${wg.overlayExtra}[v]`
   } else {
     vf = `${base}[v]`
@@ -1093,14 +1131,27 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
         }
         continue
       }
-      for (const item of items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
         if (aborted) break
         const active = activeLogo(channel, channel.timeBlocks, logoPath, item.startTime)
         const logo = await localLogo(active.raw)
         // Per-logo watermark settings, else the global default.
         const wm = active.id != null ? logoWm.get(active.id) ?? defaultWm : defaultWm
+        const wasFirst = first
         const offset = first ? Math.max(0, (Date.now() - item.startTime.getTime()) / 1000) : 0
         first = false
+
+        // The logo is hidden across filler unless asked otherwise, so ramp it
+        // down into that boundary and back up out of it rather than popping.
+        // Only meaningful on a program: filler itself either shows it or not.
+        const thisIsFiller = item.kind === 'filler'
+        const hiddenOnFiller = !wm.showOnFiller && wm.mode !== 'none'
+        const neighbourIsFiller = (j: number) => items[j]?.kind === 'filler'
+        const edgeFade = hiddenOnFiller && !thisIsFiller ? Math.max(0, wm.fadeSeconds) : 0
+        const fadeOutSec = edgeFade > 0 && neighbourIsFiller(i + 1) ? edgeFade : 0
+        // Don't fade in when tuning in mid-program — there was no filler on screen.
+        const fadeInSec = edgeFade > 0 && neighbourIsFiller(i - 1) && !wasFirst ? edgeFade : 0
         const mi = item.mediaItem
         // Absolute wall-clock start of the frames we're about to emit — anchors
         // the intermittent watermark so it fires on schedule for every viewer.
@@ -1132,7 +1183,7 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
           }
           const genMs = Date.now() - genStart
           if (genMs > 500) log('warn', 'system', `Channel ${channelNumber}: filler resolve blocked ${genMs}ms (should be pre-warmed)`)
-          if (clip && segDur > 0.3) seg = { filePath: clip, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, wmEpochSec, mediaWidth: W, mediaHeight: H, musicPath: music, tsOffsetSec: tsOffset }
+          if (clip && segDur > 0.3) seg = { filePath: clip, offsetSec: 0, loop: true, durationSec: segDur, hasAudio: true, logo, wmEpochSec, mediaWidth: W, mediaHeight: H, musicPath: music, tsOffsetSec: tsOffset, isFiller: true, fadeInSec: 0, fadeOutSec: 0 }
           label = `filler (${Math.round(segDur)}s)${music ? ' +music' : ''}${src}`
           if (!clip) log('error', 'stream', `Channel ${channelNumber}: no filler clip — a ${Math.round(segDur)}s gap will play black`)
         } else if (fs.existsSync(mi.path)) {
@@ -1140,7 +1191,7 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
           // watermark cares — skip the probe otherwise.
           const sar = wm.constrainToMedia && wm.mode !== 'none' && logo ? await probeSar(mi.path) : 1
           const dispW = Math.round((mi.width ?? W) * sar)
-          seg = { filePath: mi.path, offsetSec: offset, loop: false, durationSec: segDur, hasAudio: !!mi.audioCodec, logo, wmEpochSec, mediaWidth: dispW, mediaHeight: mi.height ?? H, tsOffsetSec: tsOffset }
+          seg = { filePath: mi.path, offsetSec: offset, loop: false, durationSec: segDur, hasAudio: !!mi.audioCodec, logo, wmEpochSec, mediaWidth: dispW, mediaHeight: mi.height ?? H, tsOffsetSec: tsOffset, isFiller: false, fadeInSec, fadeOutSec }
           label = mi.showTitle
             ? `${mi.showTitle}${mi.season != null && mi.episode != null ? ` S${String(mi.season).padStart(2, '0')}E${String(mi.episode).padStart(2, '0')}` : ''}${mi.title ? ` — ${mi.title}` : ''}`
             : mi.title

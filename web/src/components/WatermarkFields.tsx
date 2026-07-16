@@ -111,40 +111,49 @@ export default function WatermarkFields({
           </Section>
 
           <Section title="Appearance">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <Field label="Width %" hint="Share of the picture's width.">
                 <input type="number" min={1} max={50} className={inp} value={wm.widthPercent} onChange={(e) => set('widthPercent', Number(e.target.value))} />
               </Field>
               <Field label="Opacity %">
                 <input type="number" min={0} max={100} className={inp} value={wm.opacityPercent} onChange={(e) => set('opacityPercent', Number(e.target.value))} />
               </Field>
+              <Field label="Fade (sec)" hint="0 = pop in and out.">
+                <input type="number" min={0} step={0.5} className={inp} value={wm.fadeSeconds} onChange={(e) => set('fadeSeconds', Number(e.target.value))} />
+              </Field>
             </div>
+            <label className="flex items-start gap-2 text-sm mt-3 select-none">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={wm.showOnFiller}
+                onChange={(e) => set('showOnFiller', e.target.checked)}
+              />
+              <span className="text-slate-300">
+                Show on filler
+                <span className="block text-xs text-slate-500">
+                  Filler is usually built from this logo already, so the corner bug is a second copy of it. Left off,
+                  the logo fades out as a program hands over to filler and fades back in afterwards.
+                </span>
+              </span>
+            </label>
           </Section>
 
           {wm.mode === 'intermittent' && (
             <Section title="Timing">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <Field label="Every (min)">
                   <input type="number" min={1} className={inp} value={wm.frequencyMinutes} onChange={(e) => set('frequencyMinutes', Number(e.target.value))} />
                 </Field>
                 <Field label="Duration (sec)">
                   <input type="number" min={1} className={inp} value={wm.durationSeconds} onChange={(e) => set('durationSeconds', Number(e.target.value))} />
                 </Field>
-                <Field label="Fade (sec)" hint={fadeMax > 0 ? `0 = hard cut. Max ${fadeMax}.` : '0 = hard cut.'}>
-                  <input
-                    type="number"
-                    min={0}
-                    max={fadeMax}
-                    step={0.5}
-                    className={inp}
-                    value={wm.fadeSeconds}
-                    onChange={(e) => set('fadeSeconds', Number(e.target.value))}
-                  />
-                </Field>
               </div>
               <p className="text-xs text-slate-500 mt-2">
                 Shows for {wm.durationSeconds}s every {wm.frequencyMinutes} min
-                {wm.fadeSeconds > 0 ? `, fading in and out over ${Math.min(wm.fadeSeconds, fadeMax)}s.` : ', cutting straight in and out.'}
+                {wm.fadeSeconds > 0
+                  ? `, fading over ${Math.min(wm.fadeSeconds, fadeMax)}s${wm.fadeSeconds > fadeMax ? ` (capped at half the window)` : ''}.`
+                  : ', cutting straight in and out.'}
               </p>
             </Section>
           )}

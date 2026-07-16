@@ -111,6 +111,7 @@ export type WatermarkConfig = {
   frequencyMinutes: number
   durationSeconds: number
   fadeSeconds: number
+  showOnFiller: boolean
   constrainToMedia: boolean
 }
 
