@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { api, backupUrl, type WatermarkConfig } from '../lib/api'
+import { api, backupUrl, type ComingUpConfig, type WatermarkConfig } from '../lib/api'
 import WatermarkFields from '../components/WatermarkFields'
+import ComingUpFields from '../components/ComingUpFields'
 import EncodingProfilesCard from '../components/EncodingProfilesCard'
 
 export default function Settings() {
@@ -10,6 +11,8 @@ export default function Settings() {
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [wm, setWm] = useState<WatermarkConfig | null>(null)
   const [wmMsg, setWmMsg] = useState<string | null>(null)
+  const [cu, setCu] = useState<ComingUpConfig | null>(null)
+  const [cuMsg, setCuMsg] = useState<string | null>(null)
   const [wipeAssets, setWipeAssets] = useState(true)
   const [resetBusy, setResetBusy] = useState(false)
   const [resetMsg, setResetMsg] = useState<string | null>(null)
@@ -20,6 +23,7 @@ export default function Settings() {
       .then((s) => {
         setConfigured(s.tmdbConfigured)
         setWm(s.watermark)
+        setCu(s.comingUp)
       })
       .catch(() => {})
   }, [])
@@ -34,6 +38,19 @@ export default function Settings() {
       setWmMsg('Watermark saved. ✅')
     } catch (err) {
       setWmMsg(err instanceof Error ? err.message : 'Failed to save watermark')
+    }
+  }
+
+  async function saveCu(e: React.FormEvent) {
+    e.preventDefault()
+    if (!cu) return
+    setCuMsg(null)
+    try {
+      const r = await api.saveComingUp(cu)
+      setCu(r.comingUp)
+      setCuMsg('Coming-up caption saved. ✅')
+    } catch (err) {
+      setCuMsg(err instanceof Error ? err.message : 'Failed to save')
     }
   }
 
@@ -148,6 +165,22 @@ export default function Settings() {
           <WatermarkFields wm={wm} onChange={setWm} />
           <div className="flex justify-end mt-3">
             <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-5 py-2 text-sm font-medium">Save default</button>
+          </div>
+        </form>
+      )}
+
+      {cu && (
+        <form onSubmit={saveCu} className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 mt-6">
+          <h2 className="font-semibold mb-1">Coming up next</h2>
+          <p className="text-slate-400 text-sm mb-4">
+            Burns a short caption naming the next program over the current one, at the timing you choose.
+            Shown over programs only — never over filler. Needs an ffmpeg build with text support; if it's
+            missing, the caption is skipped and the stream is unaffected.
+          </p>
+          {cuMsg && <div className="text-sm text-emerald-300 mb-3">{cuMsg}</div>}
+          <ComingUpFields cfg={cu} onChange={setCu} />
+          <div className="flex justify-end mt-3">
+            <button type="submit" className="rounded-lg bg-indigo-500 hover:bg-indigo-400 px-5 py-2 text-sm font-medium">Save</button>
           </div>
         </form>
       )}

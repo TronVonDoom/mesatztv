@@ -115,9 +115,22 @@ export type WatermarkConfig = {
   constrainToMedia: boolean
 }
 
+export type ComingUpConfig = {
+  enabled: boolean
+  timing: 'middle' | 'beforeEnd' | 'both'
+  leadSeconds: number
+  holdSeconds: number
+  fadeSeconds: number
+  position: 'top' | 'bottom'
+  template: string
+  fontSizePercent: number
+  opacityPercent: number
+}
+
 export type SettingsInfo = {
   tmdbConfigured: boolean
   watermark: WatermarkConfig
+  comingUp: ComingUpConfig
 }
 
 export type MetadataStatus = {
@@ -405,6 +418,8 @@ export const api = {
   metadataStatus: () => request<MetadataStatus>('/api/metadata/status'),
   saveWatermark: (wm: WatermarkConfig) =>
     request<{ ok: boolean; watermark: WatermarkConfig }>('/api/settings/watermark', { method: 'POST', body: JSON.stringify(wm) }),
+  saveComingUp: (c: ComingUpConfig) =>
+    request<{ ok: boolean; comingUp: ComingUpConfig }>('/api/settings/comingup', { method: 'POST', body: JSON.stringify(c) }),
 
   // --- collections ---
   collections: (channelId?: number) =>

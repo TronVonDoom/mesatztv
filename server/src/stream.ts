@@ -14,6 +14,17 @@ const W = 1280
 const H = 720
 const FPS = 30
 
+// How far ahead of real time a viewer session is allowed to run: the outer
+// ffmpeg bursts this much at connect so the player has a buffer cushion
+// (network jitter eats the cushion, not the picture), and catches back up to
+// it after per-item startup stalls.
+const READ_BURST_SEC = 4
+// Because of that burst, item boundaries are fetched up to READ_BURST_SEC
+// early — the fetch lands in the tail of the item the viewer has already
+// watched. A pick within this of an item's end serves the NEXT item instead of
+// replaying the tail. Must comfortably exceed READ_BURST_SEC.
+const TAIL_SKIP_SEC = READ_BURST_SEC + 2
+
 // Resolved per-channel output settings the stream pipeline builds ffmpeg from.
 export type ScalingMode = 'pad' | 'stretch' | 'crop'
 export const SCALING_MODES: ScalingMode[] = ['pad', 'stretch', 'crop']
@@ -177,6 +188,74 @@ export async function loadWatermark(): Promise<WatermarkConfig> {
   return parseWatermark(s?.value)
 }
 
+// ---- "Coming up next" overlay ---------------------------------------------
+
+// A burned-in caption naming the NEXT program, shown over the current program
+// during a configurable window. Never shown on filler (the schedule filler is a
+// separate feature). Text is drawn with ffmpeg's drawtext, which is
+// feature-detected — if unavailable the overlay is silently skipped.
+export type ComingUpConfig = {
+  enabled: boolean
+  // Where in the current program the caption appears.
+  timing: 'middle' | 'beforeEnd' | 'both'
+  leadSeconds: number // beforeEnd: how long before the program ends it appears
+  holdSeconds: number // how long it stays on screen
+  fadeSeconds: number // fade in/out (0 = pop)
+  position: 'top' | 'bottom'
+  // Template with %tokens% filled from the next program:
+  // %showtitle% %episodetitle% %movietitle% %title% %season% %episode% %se% %year%
+  template: string
+  fontSizePercent: number // caption height as a share of the frame height
+  opacityPercent: number
+}
+
+export const DEFAULT_COMINGUP: ComingUpConfig = {
+  enabled: false,
+  timing: 'beforeEnd',
+  leadSeconds: 300,
+  holdSeconds: 12,
+  fadeSeconds: 0.5,
+  position: 'bottom',
+  template: 'Coming up next: %showtitle% — %episodetitle%',
+  fontSizePercent: 4,
+  opacityPercent: 90,
+}
+
+/** Parse a stored ComingUpConfig JSON blob, filling gaps from the default. */
+export function parseComingUp(json: string | null | undefined): ComingUpConfig {
+  if (!json) return DEFAULT_COMINGUP
+  try {
+    return { ...DEFAULT_COMINGUP, ...(JSON.parse(json) as Partial<ComingUpConfig>) }
+  } catch {
+    return DEFAULT_COMINGUP
+  }
+}
+
+/** Clamp an incoming (untrusted) coming-up config to valid ranges/enums. */
+export function sanitizeComingUp(input: unknown): ComingUpConfig {
+  const c = { ...DEFAULT_COMINGUP, ...((input as Partial<ComingUpConfig>) ?? {}) }
+  const timings: ComingUpConfig['timing'][] = ['middle', 'beforeEnd', 'both']
+  const num = (v: unknown, def: number, lo: number, hi: number) =>
+    Math.max(lo, Math.min(hi, Number(v) || def))
+  return {
+    enabled: !!c.enabled,
+    timing: timings.includes(c.timing) ? c.timing : 'beforeEnd',
+    leadSeconds: Math.round(num(c.leadSeconds, 300, 5, 3600)),
+    holdSeconds: Math.round(num(c.holdSeconds, 12, 2, 120)),
+    fadeSeconds: num(c.fadeSeconds, 0.5, 0, 10),
+    position: c.position === 'top' ? 'top' : 'bottom',
+    // Cap length so a pathological template can't blow up the filtergraph.
+    template: String(c.template ?? DEFAULT_COMINGUP.template).slice(0, 200),
+    fontSizePercent: num(c.fontSizePercent, 4, 1.5, 15),
+    opacityPercent: Math.round(num(c.opacityPercent, 90, 0, 100)),
+  }
+}
+
+export async function loadComingUp(): Promise<ComingUpConfig> {
+  const s = await prisma.setting.findUnique({ where: { key: 'comingup' } })
+  return parseComingUp(s?.value)
+}
+
 let encoderCache: string | null = null
 
 /** Detect once whether NVIDIA nvenc is available; fall back to libx264. */
@@ -207,6 +286,43 @@ async function resolveEncoder(hwaccel: StreamProfile['hwaccel']): Promise<string
     return avail
   }
   return avail // auto
+}
+
+// Burned-in text (coming-up-next, schedule filler) needs drawtext, which is
+// only present when ffmpeg was built with libfreetype, plus a font file on
+// disk. Both are detected ONCE; if either is missing, text overlays are
+// silently skipped — a missing caption must never fail an encode and black out
+// the stream. fonts-dejavu-core (installed in the image) provides these paths.
+const FONT_REGULAR = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+const FONT_BOLD = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+export type TextSupport = { font: string; fontBold: string }
+let textCache: TextSupport | null | undefined
+function detectTextOverlay(): Promise<TextSupport | null> {
+  if (textCache !== undefined) return Promise.resolve(textCache)
+  return new Promise((resolve) => {
+    const font = fs.existsSync(FONT_REGULAR) ? FONT_REGULAR : undefined
+    const fontBold = fs.existsSync(FONT_BOLD) ? FONT_BOLD : font
+    if (!font) {
+      log('warn', 'ffmpeg', 'No DejaVu font on disk — on-screen text overlays disabled')
+      return resolve((textCache = null))
+    }
+    let out = ''
+    const p = spawn('ffmpeg', ['-hide_banner', '-filters'])
+    p.stdout.on('data', (d) => (out += d))
+    p.on('error', () => {
+      log('warn', 'ffmpeg', 'Could not probe ffmpeg filters — text overlays disabled')
+      resolve((textCache = null))
+    })
+    p.on('close', () => {
+      if (/\bdrawtext\b/.test(out)) {
+        log('info', 'ffmpeg', 'Text overlay (drawtext) available')
+        resolve((textCache = { font, fontBold: fontBold as string }))
+      } else {
+        log('warn', 'ffmpeg', 'ffmpeg lacks the drawtext filter (no libfreetype) — text overlays disabled')
+        resolve((textCache = null))
+      }
+    })
+  })
 }
 
 // Video quality → bitrate ladder (nvenc VBR) / CRF (libx264), scaled a bit by
@@ -424,7 +540,90 @@ function watermarkGraph(
   return { logoChain, overlayPos, overlayExtra: '' }
 }
 
-function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamProfile): string[] {
+// The fields of a media item a coming-up caption can reference.
+type CaptionItem = { title: string; showTitle: string | null; season: number | null; episode: number | null; year: number | null }
+
+/**
+ * Fill a coming-up template from the next program, dropping empty tokens and any
+ * separators they leave dangling (so a movie with no episode title doesn't emit
+ * a trailing " — "). Returns '' when nothing meaningful is left.
+ */
+export function renderComingUpText(template: string, mi: CaptionItem): string {
+  const se =
+    mi.season != null && mi.episode != null
+      ? `S${String(mi.season).padStart(2, '0')}E${String(mi.episode).padStart(2, '0')}`
+      : ''
+  const vars: Record<string, string> = {
+    showtitle: mi.showTitle ?? '',
+    episodetitle: mi.showTitle ? mi.title : '', // only an "episode title" when it's a show
+    movietitle: mi.showTitle ? '' : mi.title,
+    title: mi.title ?? '',
+    season: mi.season != null ? String(mi.season) : '',
+    episode: mi.episode != null ? String(mi.episode) : '',
+    se,
+    year: mi.year != null ? String(mi.year) : '',
+  }
+  let s = template.replace(/%(\w+)%/g, (m, k: string) => (k.toLowerCase() in vars ? vars[k.toLowerCase()] : m))
+  // Tidy up separators orphaned by an empty token.
+  s = s
+    .replace(/\s*[—–-]\s*[—–-]\s*/g, ' — ') // doubled dash -> single
+    .replace(/^\s*[—–-]+\s*/g, '') // leading dash
+    .replace(/\s*[:—–-]+\s*$/g, '') // trailing colon/dash
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return s
+}
+
+/** Segment-relative windows (seconds) in which the caption should be visible. */
+function comingUpWindows(cfg: ComingUpConfig, segDur: number, itemDur: number, offset: number): { a: number; b: number }[] {
+  const out: { a: number; b: number }[] = []
+  const clampWin = (a: number, b: number) => {
+    const A = Math.max(0, a)
+    const B = Math.min(segDur, b)
+    if (B - A > 0.5) out.push({ a: A, b: B })
+  }
+  if (cfg.timing === 'beforeEnd' || cfg.timing === 'both') {
+    const start = segDur - cfg.leadSeconds
+    clampWin(start, start + cfg.holdSeconds)
+  }
+  if (cfg.timing === 'middle' || cfg.timing === 'both') {
+    // Midpoint of the whole item, expressed in this segment's clock (a mid-item
+    // tune-in has offset>0, so the midpoint may already be behind us — then the
+    // clamp drops it, which is correct).
+    const mid = itemDur / 2 - offset
+    clampWin(mid - cfg.holdSeconds / 2, mid + cfg.holdSeconds / 2)
+  }
+  return out
+}
+
+/**
+ * Build the drawtext filter for the coming-up caption. Expression option values
+ * are single-quoted so their commas aren't parsed as filtergraph separators
+ * (the same trick the watermark graph uses). Text comes from a file
+ * (expansion=none) so titles with quotes/colons/percent signs can't break the
+ * graph. Returns null when there are no visible windows.
+ */
+function comingUpFilter(cfg: ComingUpConfig, font: string, textFile: string, windows: { a: number; b: number }[], p: StreamProfile): string | null {
+  if (windows.length === 0) return null
+  const fontsize = Math.max(10, Math.round((p.height * cfg.fontSizePercent) / 100))
+  const margin = Math.round(p.height * 0.06)
+  const y = cfg.position === 'top' ? String(margin) : `h-text_h-${margin}`
+  const opacity = Math.max(0, Math.min(1, cfg.opacityPercent / 100))
+  const F = Math.max(0.05, cfg.fadeSeconds)
+  const enable = windows.map((w) => `between(t,${w.a.toFixed(2)},${w.b.toFixed(2)})`).join('+')
+  const fades = windows.map((w) => `clip(min((t-${w.a.toFixed(2)})/${F},(${w.b.toFixed(2)}-t)/${F}),0,1)`)
+  const fade = fades.length === 1 ? fades[0] : `max(${fades[0]},${fades[1]})`
+  const alpha = `${opacity.toFixed(3)}*(${fade})`
+  const box = Math.round(fontsize * 0.45)
+  return (
+    `drawtext=fontfile=${font}:textfile=${textFile}:expansion=none` +
+    `:fontsize=${fontsize}:fontcolor=white:borderw=2:bordercolor=black@0.85` +
+    `:box=1:boxcolor=black@0.5:boxborderw=${box}` +
+    `:x=(w-text_w)/2:y=${y}:enable='${enable}':alpha='${alpha}'`
+  )
+}
+
+function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamProfile, textFilter?: string): string[] {
   // Filler is usually built out of the logo already, so the bug goes on top of
   // it only if explicitly asked for.
   const useWatermark = wm.mode !== 'none' && !!seg.logo && (!seg.isFiller || wm.showOnFiller)
@@ -484,10 +683,12 @@ function ffmpegArgs(seg: Segment, enc: string, wm: WatermarkConfig, p: StreamPro
     const rect = mediaRect(seg.mediaWidth, seg.mediaHeight, constrain, p.width, p.height)
     const totalFrames = Math.round((seg.durationSec ?? 0) * p.fps)
     const wg = watermarkGraph(wm, logoIdx, seg.wmEpochSec, rect, p.fps, fading, seg.fadeInSec, seg.fadeOutSec, totalFrames)
-    vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}${wg.overlayExtra}[v]`
+    vf = `${base}[bg];${wg.logoChain};[bg][lg]overlay=${wg.overlayPos}${wg.overlayExtra}${textFilter ? '[vpre]' : '[v]'}`
   } else {
-    vf = `${base}[v]`
+    vf = `${base}${textFilter ? '[vpre]' : '[v]'}`
   }
+  // The coming-up caption goes last, on top of everything else.
+  if (textFilter) vf += `;[vpre]${textFilter}[v]`
   const aIn = audioIdx >= 0 ? `${audioIdx}:a:0` : '0:a:0'
   const layout = p.audioChannels === 6 ? '5.1' : 'stereo'
   // Evens out the jump between a 1970s sitcom and a modern show. dynaudnorm,
@@ -556,7 +757,9 @@ async function localLogo(raw: string | null): Promise<string | undefined> {
   let result: string | undefined
   if (/^https?:\/\//i.test(raw)) {
     try {
-      const r = await fetch(raw)
+      // Bounded: a hung logo host must never hold an item open — the outer
+      // concat process would wait on it forever and the viewer sees a spinner.
+      const r = await fetch(raw, { signal: AbortSignal.timeout(5000) })
       if (r.ok) {
         const file = path.join(logoCacheDir(), createHash('md5').update(raw).digest('hex') + '.png')
         fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()))
@@ -959,6 +1162,16 @@ export async function resolveFillerClipById(id: number, onProgress?: ProgressCb)
  * animated fallback plus every channel/block filler.
  */
 export async function warmFiller(): Promise<void> {
+  // Sweep any coming-up caption files left behind by a hard crash (a clean exit
+  // removes each after its segment).
+  try {
+    for (const f of fs.readdirSync(dataDir())) {
+      if (/^caption-.*\.txt$/.test(f)) fs.rmSync(path.join(dataDir(), f), { force: true })
+    }
+  } catch {
+    /* best-effort */
+  }
+
   const animated = await ensureAnimatedFiller(30).catch(() => undefined)
   if (animated) log('info', 'system', `Animated filler ready: ${animated}`)
   else log('warn', 'system', 'No filler clip available — gaps will play black')
@@ -1132,6 +1345,12 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
     // whole session — the per-item encoders then run flat out until backpressure
     // stops them, which keeps a little of the next program ready to go.
     '-readrate', '1.0',
+    // Send the first few seconds unmetered so the player starts with a buffer
+    // cushion, and re-earn that cushion (at 1.5x) after per-item startup
+    // stalls. The item picker compensates for boundaries arriving early — see
+    // TAIL_SKIP_SEC in streamChannelItem.
+    '-readrate_initial_burst', String(READ_BURST_SEC),
+    '-readrate_catchup', '1.5',
     '-stream_loop', '-1',
     '-i', `${internalBase()}/internal/concat/${channelNumber}`,
     '-c', 'copy',
@@ -1139,22 +1358,41 @@ export async function streamChannel(channelNumber: number, res: Response, req?: 
   ]
   log('debug', 'ffmpeg', `Ch ${channelNumber} concat command`, 'ffmpeg ' + args.join(' '))
 
+  res.on('error', () => {}) // a torn-down client socket must not throw
+  res.socket?.setNoDelay(true) // TS chunks go out as they're written, not Nagle-batched
   res.writeHead(200, {
     'Content-Type': 'video/mp2t',
     'Cache-Control': 'no-cache, no-store',
     Connection: 'close',
   })
 
+  // If the concat process dies while the viewer is still connected (a broken
+  // playlist entry, an ffmpeg fault…), restart it in the same response rather
+  // than dropping the viewer: TS players ride out the timestamp discontinuity,
+  // but a dead connection is an endless spinner. Three quick deaths in a row
+  // means something systemic — give up and let the client's own retry take over.
   let reason = 'client disconnected'
-  const proc = spawn('ffmpeg', args)
-  res.on('close', () => proc.kill('SIGKILL'))
-  const result = await pipeSegment(proc, res)
-  if (result.spawnError) {
-    reason = 'failed to launch ffmpeg'
-    log('error', 'ffmpeg', `Channel ${channelNumber}: could not launch the concat process`, String(result.spawnError))
-  } else if (result.code && result.code !== 0 && !res.writableEnded) {
-    reason = `ffmpeg exited ${result.code}`
-    log('error', 'ffmpeg', `Channel ${channelNumber}: concat process exited ${result.code}`, result.stderr || '(no stderr)')
+  let strikes = 0
+  while (!res.writableEnded && !res.destroyed) {
+    const startedAt = Date.now()
+    const proc = spawn('ffmpeg', args)
+    const kill = () => proc.kill('SIGKILL')
+    res.on('close', kill)
+    const result = await pipeSegment(proc, res)
+    res.off('close', kill)
+    if (res.destroyed || res.writableEnded) break // viewer left — the normal way out
+    if (result.spawnError) {
+      reason = 'failed to launch ffmpeg'
+      log('error', 'ffmpeg', `Channel ${channelNumber}: could not launch the concat process`, String(result.spawnError))
+      break
+    }
+    strikes = Date.now() - startedAt > 60_000 ? 1 : strikes + 1
+    if (strikes >= 3) {
+      reason = `ffmpeg exited ${result.code} repeatedly`
+      log('error', 'ffmpeg', `Channel ${channelNumber}: concat process kept dying (exit ${result.code}) — giving up`, result.stderr || '(no stderr)')
+      break
+    }
+    log('warn', 'ffmpeg', `Channel ${channelNumber}: concat process exited ${result.code ?? 'n/a'} mid-session — restarting`, result.stderr || '(no stderr)')
   }
 
   const left = (viewers.get(channelNumber) ?? 1) - 1
@@ -1215,6 +1453,9 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
   const profile = resolveProfile(channel.profile)
   const enc = await resolveEncoder(profile.hwaccel)
   const defaultWm = await loadWatermark()
+  const comingUp = await loadComingUp()
+  // Only probe for drawtext when a text feature is actually turned on.
+  const textSupport = comingUp.enabled ? await detectTextOverlay() : null
   const logos = await prisma.logo.findMany()
   const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
   // Each logo can carry its own watermark settings; legacy URL logos and the
@@ -1222,6 +1463,7 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
   const logoWm = new Map<number, WatermarkConfig>(logos.map((l) => [l.id, parseWatermark(l.watermark, defaultWm)]))
 
   let current: ChildProcess | null = null
+  res.on('error', () => {}) // a torn-down client socket must not throw
   res.on('close', () => current?.kill('SIGKILL'))
 
   // Whatever is on air right now, plus its neighbours (the watermark fades
@@ -1233,14 +1475,34 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
     take: 3,
     include: { mediaItem: true },
   })
-  const prev = await prisma.playoutItem.findFirst({
+  const prevRow = await prisma.playoutItem.findFirst({
     where: { channelId: channel.id, stopTime: { lte: now } },
     orderBy: { stopTime: 'desc' },
     select: { kind: true },
   })
-  const item = items[0]
+  // The outer session reads READ_BURST_SEC ahead of the wall clock, so at a
+  // boundary this endpoint is asked for the next item a few seconds early —
+  // the pick lands in the tail of the item the viewer has already watched.
+  // Serve the next item instead of replaying that tail.
+  const tail = items[0]
+  const inTail =
+    !!tail &&
+    !!items[1] &&
+    now.getTime() > tail.startTime.getTime() + 1000 &&
+    tail.stopTime.getTime() - now.getTime() < TAIL_SKIP_SEC * 1000
+  const item = inTail ? items[1] : items[0]
+  const next = inTail ? items[2] : items[1]
+  const prevKind = inTail && tail ? tail.kind : prevRow?.kind
   if (!item) {
     await streamBlack(res, profile, enc, 2, 'nothing on air (playout exhausted)', channelNumber)
+    return
+  }
+  // Not on air yet (dead air between blocks on a blocks-only channel): hold
+  // with black rather than airing the next program early. Capped so each
+  // refetch re-evaluates against the clock.
+  const leadGapSec = (item.startTime.getTime() - now.getTime()) / 1000
+  if (leadGapSec > TAIL_SKIP_SEC) {
+    await streamBlack(res, profile, enc, Math.min(leadGapSec, 30), 'dead air until the next scheduled item', channelNumber)
     return
   }
 
@@ -1262,9 +1524,9 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
         const thisIsFiller = item.kind === 'filler'
         const hiddenOnFiller = !wm.showOnFiller && wm.mode !== 'none'
         const edgeFade = hiddenOnFiller && !thisIsFiller ? Math.max(0, wm.fadeSeconds) : 0
-        const fadeOutSec = edgeFade > 0 && items[1]?.kind === 'filler' ? edgeFade : 0
+        const fadeOutSec = edgeFade > 0 && next?.kind === 'filler' ? edgeFade : 0
         // Don't fade in when tuning in mid-program — there was no filler on screen.
-        const fadeInSec = edgeFade > 0 && prev?.kind === 'filler' && !midItem ? edgeFade : 0
+        const fadeInSec = edgeFade > 0 && prevKind === 'filler' && !midItem ? edgeFade : 0
         const mi = item.mediaItem
         // Absolute wall-clock start of the frames we're about to emit — anchors
         // the intermittent watermark so it fires on schedule for every viewer.
@@ -1272,7 +1534,8 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
         // Cap every segment to its scheduled slot so output timestamps stay
         // exactly continuous (a program overrunning its probed duration is what
         // could otherwise push the next segment's PTS backwards → a freeze).
-        const segDur = (item.stopTime.getTime() - now.getTime()) / 1000
+        // Measured from the item's own start when a tail-skip fetched it early.
+        const segDur = (item.stopTime.getTime() - Math.max(now.getTime(), item.startTime.getTime())) / 1000
         let seg: Segment | null = null
         let label: string
 
@@ -1323,7 +1586,32 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
           await streamBlack(res, profile, enc, Math.min(segDur, 10), `no playable segment for ${label}`, channelNumber)
           return
         }
-        const args = ffmpegArgs(seg, enc, wm, profile)
+
+        // Coming-up-next caption: only over a program (never filler), only when
+        // the next item is a real program with metadata, and only if drawtext is
+        // available. Text is written to a per-segment file (cleaned up below) so
+        // titles with quotes/colons/% can't break the filtergraph.
+        let textFilter: string | undefined
+        let captionFile: string | undefined
+        if (comingUp.enabled && textSupport && !thisIsFiller && next?.kind === 'program' && next.mediaItem) {
+          const text = renderComingUpText(comingUp.template, next.mediaItem)
+          const itemDur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000
+          const windows = comingUpWindows(comingUp, segDur, itemDur, offset)
+          if (text && windows.length > 0) {
+            // Unique per request: several viewers can open the same channel's
+            // item concurrently, each staging its own caption file.
+            captionFile = path.join(dataDir(), `caption-${channelNumber}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`)
+            try {
+              fs.writeFileSync(captionFile, text)
+              textFilter = comingUpFilter(comingUp, textSupport.font, captionFile, windows, profile) ?? undefined
+              if (textFilter) log('debug', 'stream', `Ch ${channelNumber} coming-up caption: "${text}"`, `${windows.length} window(s)`)
+            } catch (e) {
+              log('warn', 'stream', `Channel ${channelNumber}: could not stage coming-up caption`, String(e))
+              captionFile = undefined
+            }
+          }
+        }
+        const args = ffmpegArgs(seg, enc, wm, profile, textFilter)
         let wmDesc: string
         if (wm.mode === 'none' || !logo) {
           wmDesc = 'no watermark'
@@ -1349,6 +1637,8 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
         current = spawn('ffmpeg', args)
         const result = await pipeSegment(current, res)
         current = null
+        // ffmpeg has read the caption file at init; safe to drop it now.
+        if (captionFile) fs.rmSync(captionFile, { force: true })
         // Log the outcome of every segment (bytes, wall time, first-byte delay)
         // — a slow first byte or zero bytes is the stall a viewer sees as a
         // freeze/black screen.
@@ -1371,6 +1661,12 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
             log('warn', 'ffmpeg', `Channel ${channelNumber}: encoder slower than real-time (${wallS}s for a ${Math.round(segDur)}s segment, ${enc}) — likely cause of freezing`, detail)
           } else {
             log('debug', 'ffmpeg', `Channel ${channelNumber}: segment done — ${label}`, `${detail}${result.stderr ? '\n' + result.stderr : ''}`)
+          }
+          // A segment that produced nothing would hand the concat demuxer an
+          // empty entry, which it treats as fatal — the whole viewer session
+          // dies. Substitute valid black TS so the session survives the slot.
+          if (result.bytes === 0 && !res.writableEnded && !res.destroyed) {
+            await streamBlack(res, profile, enc, Math.min(Math.max(segDur, 1), 8), `encoder produced no output for ${label}`, channelNumber)
           }
         }
       }

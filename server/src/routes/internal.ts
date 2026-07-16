@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { concatPlaylist, streamChannelItem } from '../stream.js'
+import { log } from '../logs.js'
 
 export const internalRouter = Router()
 
@@ -25,7 +26,11 @@ internalRouter.get('/concat/:number', (req, res) => {
 
 // One item — whatever is on air right now — encoded and streamed until it ends.
 internalRouter.get('/stream/:number', (req, res) => {
-  streamChannelItem(Number(req.params.number), res, req).catch(() => {
+  streamChannelItem(Number(req.params.number), res, req).catch((e) => {
+    log('error', 'stream', `Item stream for channel ${req.params.number} threw`, String(e?.stack || e))
+    // Always close the response: a hanging item would make the outer ffmpeg
+    // wait on it forever, and the viewer sees an endless spinner.
     if (!res.headersSent) res.status(500).end()
+    else if (!res.writableEnded) res.end()
   })
 })

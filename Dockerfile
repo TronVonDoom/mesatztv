@@ -20,9 +20,11 @@ RUN npm run build
 
 # ---- Stage 3: lean runtime image ----
 FROM node:22-slim AS runtime
-# ffmpeg = streaming pipeline (later); openssl = required by Prisma
+# ffmpeg = streaming pipeline (later); openssl = required by Prisma;
+# fonts-dejavu-core = a known TTF on disk so ffmpeg's drawtext (burned-in
+# "coming up next" / schedule text) has a font to render with.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg openssl ca-certificates \
+  && apt-get install -y --no-install-recommends ffmpeg openssl ca-certificates fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV DATABASE_URL=file:/app/data/mesatztv.db
