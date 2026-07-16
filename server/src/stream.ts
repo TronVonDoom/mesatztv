@@ -1,12 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import type { Request, Response } from 'express'
 import { prisma } from './db.js'
 import { buildPlayout, prunePlayout } from './playout.js'
-import { assetsDir, dataDir, logosDir } from './paths.js'
+import { assetsDir, dataDir, logoCacheDir, logosDir } from './paths.js'
 import { log } from './logs.js'
 
 // Fixed canvas for generated filler clips (playback scales them to the channel's
@@ -351,7 +350,7 @@ async function localLogo(raw: string | null): Promise<string | undefined> {
     try {
       const r = await fetch(raw)
       if (r.ok) {
-        const file = path.join(os.tmpdir(), 'mesatztv-logo-' + createHash('md5').update(raw).digest('hex') + '.png')
+        const file = path.join(logoCacheDir(), createHash('md5').update(raw).digest('hex') + '.png')
         fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()))
         result = file
       }

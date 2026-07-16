@@ -27,3 +27,12 @@ export function tmdbCacheDir(): string {
   fs.mkdirSync(d, { recursive: true })
   return d
 }
+
+// Legacy http:// logo URLs downloaded for watermarking. Kept under the data
+// dir like everything else the app writes — never the media library, and not
+// the container's /tmp, which is lost on restart.
+export function logoCacheDir(): string {
+  const d = path.join(dataDir(), 'logo-cache')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}

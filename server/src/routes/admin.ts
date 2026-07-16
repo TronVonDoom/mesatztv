@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { prisma } from '../db.js'
-import { dataDir, logosDir } from '../paths.js'
+import { dataDir, logoCacheDir, logosDir, tmdbCacheDir } from '../paths.js'
 import { log } from '../logs.js'
 
 export const adminRouter = Router()
@@ -64,6 +64,10 @@ adminRouter.post('/reset', async (req, res) => {
       // Generated filler(s).
       for (const f of fs.readdirSync(dataDir())) {
         if (/^filler.*\.mp4$/i.test(f)) fs.rmSync(path.join(dataDir(), f), { force: true })
+      }
+      // Downloaded caches — all regenerable on demand.
+      for (const dir of [tmdbCacheDir(), logoCacheDir()]) {
+        fs.rmSync(dir, { recursive: true, force: true })
       }
     }
 
