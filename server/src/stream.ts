@@ -409,8 +409,11 @@ function watermarkGraph(
     terms.push(`clip((${totalFrames}-N)/${Math.max(1, Math.round(fadeOutSec * fps))},0,1)`)
   }
 
+  // Scale the logo's OWN alpha — never replace it. A constant here would make
+  // every pixel opaque, turning the transparent surround (which is transparent
+  // *black*) into a solid box behind the logo.
   const env = terms.length ? terms.join('*') : '1'
-  const alpha = `${(opacity * 255).toFixed(1)}*${env}`
+  const alpha = `alpha(X,Y)*${opacity.toFixed(3)}*${env}`
   const logoChain = `${scale},format=gbrap,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${alpha}'[lg]`
   return { logoChain, overlayPos, overlayExtra: '' }
 }
