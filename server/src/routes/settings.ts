@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { getTmdbKey, setTmdbKey, validateKey } from '../tmdb.js'
-import { loadComingUp, loadWatermark, sanitizeComingUp, sanitizeWatermark } from '../stream.js'
+import { loadWatermark, sanitizeWatermark } from '../stream.js'
 import { prisma } from '../db.js'
 
 export const settingsRouter = Router()
@@ -17,7 +17,6 @@ settingsRouter.get('/', async (_req, res) => {
   res.json({
     tmdbConfigured: !!key,
     watermark: await loadWatermark(),
-    comingUp: await loadComingUp(),
   })
 })
 
@@ -25,12 +24,6 @@ settingsRouter.post('/watermark', async (req, res) => {
   const wm = sanitizeWatermark(req.body)
   await setSetting('watermark', JSON.stringify(wm))
   res.json({ ok: true, watermark: wm })
-})
-
-settingsRouter.post('/comingup', async (req, res) => {
-  const c = sanitizeComingUp(req.body)
-  await setSetting('comingup', JSON.stringify(c))
-  res.json({ ok: true, comingUp: c })
 })
 
 // Validate and save the TMDB API key in one step.

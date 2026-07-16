@@ -127,10 +127,32 @@ export type ComingUpConfig = {
   opacityPercent: number
 }
 
+// Starting point when a channel/block first enables a caption.
+export const DEFAULT_COMINGUP: ComingUpConfig = {
+  enabled: true,
+  timing: 'beforeEnd',
+  leadSeconds: 300,
+  holdSeconds: 12,
+  fadeSeconds: 0.5,
+  position: 'bottom',
+  template: 'Coming up next: %showtitle% — %episodetitle%',
+  fontSizePercent: 4,
+  opacityPercent: 90,
+}
+
+/** Parse a stored comingUp JSON string into a config (null/invalid → null). */
+export function parseComingUp(json: string | null | undefined): ComingUpConfig | null {
+  if (!json) return null
+  try {
+    return { ...DEFAULT_COMINGUP, ...(JSON.parse(json) as Partial<ComingUpConfig>) }
+  } catch {
+    return null
+  }
+}
+
 export type SettingsInfo = {
   tmdbConfigured: boolean
   watermark: WatermarkConfig
-  comingUp: ComingUpConfig
 }
 
 export type MetadataStatus = {
@@ -260,6 +282,7 @@ export type TimeBlock = {
   logoId: number | null
   fillerMode: string
   startMode: string
+  comingUp: string | null // JSON ComingUpConfig; null = inherit channel
   collection: { id: number; name: string }
 }
 
@@ -286,6 +309,7 @@ export type ChannelDetail = {
   logoUrl: string | null
   logoId: number | null
   profileId: number | null
+  comingUp: string | null // JSON ComingUpConfig; null = off
   rotationItems: RotationItem[]
   timeBlocks: TimeBlock[]
 }
@@ -418,8 +442,6 @@ export const api = {
   metadataStatus: () => request<MetadataStatus>('/api/metadata/status'),
   saveWatermark: (wm: WatermarkConfig) =>
     request<{ ok: boolean; watermark: WatermarkConfig }>('/api/settings/watermark', { method: 'POST', body: JSON.stringify(wm) }),
-  saveComingUp: (c: ComingUpConfig) =>
-    request<{ ok: boolean; comingUp: ComingUpConfig }>('/api/settings/comingup', { method: 'POST', body: JSON.stringify(c) }),
 
   // --- collections ---
   collections: (channelId?: number) =>
@@ -480,7 +502,7 @@ export const api = {
   addChannel: (data: { number?: number | null; name: string; group?: string | null; logoId?: number | null }) =>
     request<Channel>('/api/channels', { method: 'POST', body: JSON.stringify(data) }),
   channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
-  updateChannel: (id: number, data: { number?: number | null; name?: string; group?: string | null; logoUrl?: string | null; logoId?: number | null; profileId?: number | null }) =>
+  updateChannel: (id: number, data: { number?: number | null; name?: string; group?: string | null; logoUrl?: string | null; logoId?: number | null; profileId?: number | null; comingUp?: ComingUpConfig | null }) =>
     request<Channel>(`/api/channels/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   // --- encoding profiles ---
@@ -503,12 +525,12 @@ export const api = {
     request<void>(`/api/channels/${channelId}/rotation/${itemId}`, { method: 'DELETE' }),
   addBlock: (
     channelId: number,
-    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string; logoId?: number | null; startMode?: string },
+    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string; logoId?: number | null; startMode?: string; comingUp?: ComingUpConfig | null },
   ) => request<TimeBlock>(`/api/channels/${channelId}/blocks`, { method: 'POST', body: JSON.stringify(data) }),
   updateBlock: (
     channelId: number,
     blockId: number,
-    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string; logoId?: number | null; startMode?: string },
+    data: { collectionId: number; days: string; startMinute: number; endMinute: number; playbackOrder: string; logoUrl?: string | null; fillerMode?: string; logoId?: number | null; startMode?: string; comingUp?: ComingUpConfig | null },
   ) => request<TimeBlock>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteBlock: (channelId: number, blockId: number) =>
     request<void>(`/api/channels/${channelId}/blocks/${blockId}`, { method: 'DELETE' }),

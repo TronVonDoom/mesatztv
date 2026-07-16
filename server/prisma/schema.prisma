@@ -199,6 +199,11 @@ model Channel {
   playoutAnchor DateTime?
   playoutCursor DateTime?
   playoutState  String? // JSON { rotationIndex, positions }
+  // "Coming up next" caption config (JSON ComingUpConfig); null = off. A time
+  // block can override this for its own window (TimeBlock.comingUp).
+  comingUp      String?
+  // A test channel: streamable/previewable but hidden from the public M3U/EPG.
+  isTest        Boolean        @default(false)
   collections   Collection[]
   rotationItems RotationItem[]
   timeBlocks    TimeBlock[]
@@ -239,6 +244,9 @@ model TimeBlock {
   // "soft" = block starts at the next program boundary (a rotation item may run
   // past the start). "hard" = starts exactly on time; the pre-block gap is filled.
   startMode     String     @default("soft") // "soft" | "hard"
+  // Per-block override of the channel's "coming up next" caption (JSON
+  // ComingUpConfig); null = inherit the channel's setting.
+  comingUp      String?
   fillers       Filler[]
 
   @@index([channelId])

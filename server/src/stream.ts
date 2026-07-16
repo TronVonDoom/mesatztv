@@ -251,11 +251,6 @@ export function sanitizeComingUp(input: unknown): ComingUpConfig {
   }
 }
 
-export async function loadComingUp(): Promise<ComingUpConfig> {
-  const s = await prisma.setting.findUnique({ where: { key: 'comingup' } })
-  return parseComingUp(s?.value)
-}
-
 let encoderCache: string | null = null
 
 /** Detect once whether NVIDIA nvenc is available; fall back to libx264. */
@@ -1485,9 +1480,6 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
   const profile = resolveProfile(channel.profile)
   const enc = await resolveEncoder(profile.hwaccel)
   const defaultWm = await loadWatermark()
-  const comingUp = await loadComingUp()
-  // Only probe for drawtext when a text feature is actually turned on.
-  const textSupport = comingUp.enabled ? await detectTextOverlay() : null
   const logos = await prisma.logo.findMany()
   const logoPath = new Map<number, string>(logos.map((l) => [l.id, path.join(logosDir(), l.filename)]))
   // Each logo can carry its own watermark settings; legacy URL logos and the
@@ -1620,26 +1612,34 @@ export async function streamChannelItem(channelNumber: number, res: Response, re
         }
 
         // Coming-up-next caption: only over a program (never filler), only when
-        // the next item is a real program with metadata, and only if drawtext is
-        // available. Text is written to a per-segment file (cleaned up below) so
-        // titles with quotes/colons/% can't break the filtergraph.
+        // the next item is a real program with metadata. Config cascades from
+        // the airing block's override to the channel default (null = off).
+        // Text is written to a per-segment file (cleaned up below) so titles
+        // with quotes/colons/% can't break the filtergraph.
         let textFilter: string | undefined
         let captionFile: string | undefined
-        if (comingUp.enabled && textSupport && !thisIsFiller && next?.kind === 'program' && next.mediaItem) {
-          const text = renderComingUpText(comingUp.template, next.mediaItem)
-          const itemDur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000
-          const windows = comingUpWindows(comingUp, segDur, itemDur, offset)
-          if (text && windows.length > 0) {
-            // Unique per request: several viewers can open the same channel's
-            // item concurrently, each staging its own caption file.
-            captionFile = path.join(dataDir(), `caption-${channelNumber}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`)
-            try {
-              fs.writeFileSync(captionFile, text)
-              textFilter = comingUpFilter(comingUp, textSupport.font, captionFile, windows, profile) ?? undefined
-              if (textFilter) log('debug', 'stream', `Ch ${channelNumber} coming-up caption: "${text}"`, `${windows.length} window(s)`)
-            } catch (e) {
-              log('warn', 'stream', `Channel ${channelNumber}: could not stage coming-up caption`, String(e))
-              captionFile = undefined
+        if (!thisIsFiller && next?.kind === 'program' && next.mediaItem) {
+          const cuBlock = activeBlockAt(channel.timeBlocks, item.startTime)
+          const cuJson = cuBlock?.comingUp ?? channel.comingUp
+          const cu = cuJson ? parseComingUp(cuJson) : null
+          // Only probe for drawtext when a caption is actually configured.
+          const support = cu?.enabled ? await detectTextOverlay() : null
+          if (cu && support) {
+            const text = renderComingUpText(cu.template, next.mediaItem)
+            const itemDur = (item.stopTime.getTime() - item.startTime.getTime()) / 1000
+            const windows = comingUpWindows(cu, segDur, itemDur, offset)
+            if (text && windows.length > 0) {
+              // Unique per request: several viewers can open the same channel's
+              // item concurrently, each staging its own caption file.
+              captionFile = path.join(dataDir(), `caption-${channelNumber}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`)
+              try {
+                fs.writeFileSync(captionFile, text)
+                textFilter = comingUpFilter(cu, support.font, captionFile, windows, profile) ?? undefined
+                if (textFilter) log('debug', 'stream', `Ch ${channelNumber} coming-up caption: "${text}"`, `${windows.length} window(s)`)
+              } catch (e) {
+                log('warn', 'stream', `Channel ${channelNumber}: could not stage coming-up caption`, String(e))
+                captionFile = undefined
+              }
             }
           }
         }

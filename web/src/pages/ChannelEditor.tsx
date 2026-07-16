@@ -4,16 +4,24 @@ import {
   api,
   formatDays,
   minutesToTime,
+  parseComingUp,
+  DEFAULT_COMINGUP,
   type ChannelDetail,
   type Collection,
+  type ComingUpConfig,
   type EncodingProfile,
   type Playout,
 } from '../lib/api'
 import CollectionManager from '../components/CollectionManager'
 import LogoPicker from '../components/LogoPicker'
 import FillerManager from '../components/FillerManager'
+import ComingUpFields from '../components/ComingUpFields'
 import TimelineView from '../components/TimelineView'
 import WeeklyBlockGrid from '../components/WeeklyBlockGrid'
+
+// Channel-level coming-up state is always a full config; "off" is enabled=false,
+// which we persist as null (see saveSettings).
+const offComingUp = (): ComingUpConfig => ({ ...DEFAULT_COMINGUP, enabled: false })
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -68,8 +76,9 @@ export default function ChannelEditor() {
 
   const [profiles, setProfiles] = useState<EncodingProfile[]>([])
   const [chForm, setChForm] = useState<{ number: string; name: string; group: string; logoUrl: string; logoId: number | null; profileId: number | null }>({ number: '', name: '', group: '', logoUrl: '', logoId: null, profileId: null })
+  const [cu, setCu] = useState<ComingUpConfig>(offComingUp())
   const [rot, setRot] = useState({ collectionId: '', mode: 'one', count: '1', playbackOrder: 'chronological' })
-  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; logoId: number | null; fillerMode: string; startMode: string }>({
+  const [blk, setBlk] = useState<{ collectionId: string; days: number[]; start: string; end: string; playbackOrder: string; logoUrl: string; logoId: number | null; fillerMode: string; startMode: string; comingUp: ComingUpConfig | null }>({
     collectionId: '',
     days: [1, 2, 3, 4, 5],
     start: '18:00',
@@ -79,6 +88,7 @@ export default function ChannelEditor() {
     logoId: null,
     fillerMode: 'none',
     startMode: 'soft',
+    comingUp: null,
   })
   const [editingBlock, setEditingBlock] = useState<number | null>(null)
   const [guideView, setGuideView] = useState<'timeline' | 'list'>('timeline')
@@ -100,6 +110,7 @@ export default function ChannelEditor() {
           logoId: c.logoId ?? null,
           profileId: c.profileId ?? null,
         })
+        setCu(parseComingUp(c.comingUp) ?? offComingUp())
       })
       .catch(() => {})
     loadPlayout()
@@ -118,6 +129,7 @@ export default function ChannelEditor() {
         logoUrl: chForm.logoUrl || null,
         logoId: chForm.logoId,
         profileId: chForm.profileId,
+        comingUp: cu.enabled ? cu : null,
       }),
     )
   }
@@ -148,7 +160,7 @@ export default function ChannelEditor() {
 
   function resetBlockForm() {
     setEditingBlock(null)
-    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', logoId: null, fillerMode: 'none', startMode: 'soft' })
+    setBlk({ collectionId: '', days: [1, 2, 3, 4, 5], start: '18:00', end: '21:00', playbackOrder: 'chronological', logoUrl: '', logoId: null, fillerMode: 'none', startMode: 'soft', comingUp: null })
   }
 
   // Grid click on an empty slot → start a new block prefilled with that day/time.
@@ -169,6 +181,7 @@ export default function ChannelEditor() {
       logoId: b.logoId ?? null,
       fillerMode: b.fillerMode ?? 'none',
       startMode: b.startMode ?? 'soft',
+      comingUp: parseComingUp(b.comingUp),
     })
   }
 
@@ -188,6 +201,7 @@ export default function ChannelEditor() {
       logoId: blk.logoId,
       fillerMode: blk.fillerMode,
       startMode: blk.startMode,
+      comingUp: blk.comingUp,
     }
     await guard(() =>
       editingBlock ? api.updateBlock(channelId, editingBlock, payload) : api.addBlock(channelId, payload),
@@ -314,6 +328,16 @@ export default function ChannelEditor() {
             The channel logo shows in the guide and is the default on-screen watermark; a collection or time block
             can override it. Create encoding profiles under <Link to="/settings" className="text-indigo-300">Settings</Link>.
           </p>
+
+          <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 mt-5">
+            <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">Coming up next</div>
+            <p className="text-slate-500 text-xs mb-3">
+              Burns a caption naming the next program over the current one — for this channel's programs (rotation
+              and blocks alike). A time block can override it on the Schedule tab. Never shows on filler. Saved with
+              the button above.
+            </p>
+            <ComingUpFields cfg={cu} onChange={setCu} />
+          </div>
         </form>
       )}
 
@@ -380,6 +404,7 @@ export default function ChannelEditor() {
                       {b.startMode === 'hard' && ' · ⏱ hard start'}
                       {(b.logoId || b.logoUrl) && ' · 🖼 logo'}
                       {b.fillerMode && b.fillerMode !== 'none' && ` · filler: ${b.fillerMode}`}
+                      {b.comingUp && ' · 📰 up-next'}
                     </div>
                   </div>
                   <button onClick={() => editBlock(b)} className="text-xs text-slate-500 hover:text-indigo-300" aria-label="Edit">Edit</button>
@@ -405,6 +430,25 @@ export default function ChannelEditor() {
                 })}
               </div>
               <LogoPicker value={blk.logoId} onChange={(id) => setBlk({ ...blk, logoId: id })} noneLabel="On-screen logo: use collection/channel logo" />
+
+              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                <label className="flex items-center gap-2 text-sm select-none">
+                  <input
+                    type="checkbox"
+                    checked={blk.comingUp != null}
+                    onChange={(e) => setBlk({ ...blk, comingUp: e.target.checked ? blk.comingUp ?? { ...DEFAULT_COMINGUP } : null })}
+                  />
+                  <span className="text-slate-300">Override “coming up next” for this block</span>
+                </label>
+                {blk.comingUp ? (
+                  <div className="mt-3">
+                    <ComingUpFields cfg={blk.comingUp} onChange={(c) => setBlk({ ...blk, comingUp: c })} />
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 mt-1">Uses the channel's setting (General tab). Check to give this block its own — including turning the caption off for this block only.</p>
+                )}
+              </div>
+
               <div className="flex flex-wrap gap-2 items-end">
                 <select className={input + ' flex-1 min-w-32'} value={blk.collectionId} onChange={(e) => setBlk({ ...blk, collectionId: e.target.value })} required>
                   <option value="">Collection…</option>

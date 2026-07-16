@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../db.js'
 import { buildPlayout, prunePlayout, resetPlayout } from '../playout.js'
-import { viewerCount } from '../stream.js'
+import { sanitizeComingUp, viewerCount } from '../stream.js'
 
 export const channelsRouter = Router()
 
@@ -10,6 +10,10 @@ const asOrder = (v: unknown) => (ORDERS.includes(String(v)) ? String(v) : 'chron
 const FILLERS = ['none', 'between', 'end']
 const asFiller = (v: unknown) => (FILLERS.includes(String(v)) ? String(v) : 'none')
 const asStartMode = (v: unknown) => (String(v) === 'hard' ? 'hard' : 'soft')
+// A "coming up next" config to store: null/'' clears it (channel = off, block =
+// inherit); an object is clamped and stored as JSON.
+const asComingUp = (v: unknown): string | null =>
+  v == null || v === '' ? null : JSON.stringify(sanitizeComingUp(v))
 
 // Expand a block into intervals on a weekly minute timeline [0, 10080),
 // splitting any that cross the week boundary. Handles midnight wrap.
@@ -112,14 +116,15 @@ channelsRouter.get('/:id', async (req, res) => {
 
 channelsRouter.patch('/:id', async (req, res) => {
   const id = Number(req.params.id)
-  const { name, group, logoUrl, number, logoId, profileId } = req.body ?? {}
-  const data: { name?: string; group?: string | null; logoUrl?: string | null; number?: number | null; logoId?: number | null; profileId?: number | null } = {}
+  const { name, group, logoUrl, number, logoId, profileId, comingUp } = req.body ?? {}
+  const data: { name?: string; group?: string | null; logoUrl?: string | null; number?: number | null; logoId?: number | null; profileId?: number | null; comingUp?: string | null } = {}
   if (name !== undefined) data.name = String(name).trim()
   if (group !== undefined) data.group = group || null
   if (logoUrl !== undefined) data.logoUrl = logoUrl || null
   if (logoId !== undefined) data.logoId = logoId ? Number(logoId) : null
   if (profileId !== undefined) data.profileId = profileId ? Number(profileId) : null
   if (number !== undefined) data.number = number === null || number === '' ? null : Number(number)
+  if (comingUp !== undefined) data.comingUp = asComingUp(comingUp)
   try {
     const c = await prisma.channel.update({ where: { id }, data })
     res.json(c)
@@ -160,7 +165,7 @@ channelsRouter.delete('/:id/rotation/:itemId', async (req, res) => {
 // --- time blocks ---
 channelsRouter.post('/:id/blocks', async (req, res) => {
   const channelId = Number(req.params.id)
-  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode, logoId, startMode } = req.body ?? {}
+  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode, logoId, startMode, comingUp } = req.body ?? {}
   if (!collectionId || !days || startMinute == null || endMinute == null) {
     return res.status(400).json({ error: 'collectionId, days, startMinute, endMinute are required' })
   }
@@ -186,6 +191,7 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
       logoId: logoId ? Number(logoId) : null,
       fillerMode: asFiller(fillerMode),
       startMode: asStartMode(startMode),
+      comingUp: asComingUp(comingUp),
     },
   })
   res.status(201).json(b)
@@ -193,7 +199,7 @@ channelsRouter.post('/:id/blocks', async (req, res) => {
 
 channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
   const blockId = Number(req.params.blockId)
-  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode, logoId, startMode } = req.body ?? {}
+  const { collectionId, days, startMinute, endMinute, playbackOrder, logoUrl, fillerMode, logoId, startMode, comingUp } = req.body ?? {}
   const data: {
     collectionId?: number
     days?: string
@@ -204,6 +210,7 @@ channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
     fillerMode?: string
     logoId?: number | null
     startMode?: string
+    comingUp?: string | null
   } = {}
   if (collectionId !== undefined) data.collectionId = Number(collectionId)
   if (days !== undefined) data.days = String(days)
@@ -214,6 +221,7 @@ channelsRouter.patch('/:id/blocks/:blockId', async (req, res) => {
   if (logoId !== undefined) data.logoId = logoId ? Number(logoId) : null
   if (fillerMode !== undefined) data.fillerMode = asFiller(fillerMode)
   if (startMode !== undefined) data.startMode = asStartMode(startMode)
+  if (comingUp !== undefined) data.comingUp = asComingUp(comingUp)
   if (data.startMinute != null && data.endMinute != null && data.endMinute === data.startMinute) {
     return res.status(400).json({ error: 'Start and end time cannot be the same.' })
   }
